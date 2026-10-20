@@ -131,6 +131,19 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
 .go:disabled { filter: grayscale(.7) brightness(.7); cursor: default; transform: none; box-shadow: none; }
 .go.stop { background: linear-gradient(135deg, #ff6b5b, #d33f3f); box-shadow: 0 8px 24px #d33f3f44; }
 .toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: #2a1818; border: 1px solid #5c2b2b; color: #ffc4c4; padding: 10px 16px; border-radius: 10px; display: none; }
+
+/* live preview overlay */
+.live { position: fixed; inset: 0; z-index: 40; background: #05080c; display: none; flex-direction: column; }
+.live.on { display: flex; }
+.live-h { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--card); }
+.live-h b { font-size: 14px; }
+.live-name { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw; }
+.live-info { color: var(--muted); font-size: 12.5px; }
+.live-info b { color: var(--text); }
+.live-body { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; }
+.live-body video { width: 100%; height: 100%; max-height: 100%; object-fit: contain; background: #05080c; }
+.live-wait { position: absolute; inset: 0; display: grid; place-items: center; gap: 14px; align-content: center; color: var(--muted); font-size: 13px; }
+.live-wait .bar { width: 260px; }
 ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: #2a3442; border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
 @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
 </style>
@@ -245,6 +258,25 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
 </footer>
 <div class="toast" id="toast"></div>
 
+<!-- Live preview: the demo is rendered hidden and played here as it is written. -->
+<div class="live" id="live">
+  <div class="live-h">
+    <span class="dot busy" id="liveDot"></span>
+    <b>Aperçu en direct</b>
+    <span class="live-name" id="liveName"></span>
+    <span class="spacer"></span>
+    <span class="live-info" id="liveInfo"></span>
+    <button class="btn" id="liveFolder" style="display:none">Dossier</button>
+    <button class="btn" id="liveStop">Arrêter</button>
+    <button class="btn primary" id="liveHide">Masquer</button>
+  </div>
+  <div class="live-body">
+    <video id="liveVideo" controls playsinline></video>
+    <div class="live-wait" id="liveWait"><div class="bar indet"><div></div></div><span>Le flux démarre…</span></div>
+  </div>
+</div>
+
+<script src="/hls.min.js"></script>
 <script>
 const token = new URLSearchParams(location.search).get('t') || '';
 const $ = id => document.getElementById(id);
@@ -277,6 +309,7 @@ const ICON = {
   retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg>',
   x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>',
+  live: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2"/><path d="M15 11l6-3.5v9L15 13z"/></svg>',
 };
 const STATE_TXT = { pending: 'En attente', loading: 'Chargement', recording: 'Rendu', encoding: 'Finalisation', done: 'Terminé', failed: 'Erreur', cancelled: 'Annulé' };
 
@@ -306,6 +339,10 @@ function itemHtml(it) {
   }
   let acts = '';
   if (it.state === 'done') acts += `<button class="btn icon-btn" title="Lire la vidéo" data-act="play" data-id="${it.id}">${ICON.play}</button><button class="btn icon-btn" title="Afficher dans le dossier" data-act="folder" data-id="${it.id}">${ICON.folder}</button>`;
+  if (it.preview && ['loading', 'recording', 'encoding'].includes(it.state))
+    acts += `<button class="btn icon-btn" title="Afficher l’aperçu en direct" data-act="showlive" data-id="${it.id}">${ICON.live}</button>`;
+  else if (['pending', 'done', 'failed', 'cancelled'].includes(it.state) && !S.running)
+    acts += `<button class="btn icon-btn" title="Aperçu en direct : regarder la démo pendant son rendu" data-act="preview" data-id="${it.id}">${ICON.live}</button>`;
   if (['failed', 'cancelled', 'done'].includes(it.state) && !S.running) acts += `<button class="btn icon-btn ghost" title="Recommencer" data-act="retry" data-id="${it.id}">${ICON.retry}</button>`;
   if (!active) acts += `<button class="btn icon-btn ghost" title="Retirer" data-act="remove" data-id="${it.id}">${ICON.x}</button>`;
   return `<div class="item ${active ? 'active' : ''} ${cls}">
@@ -313,6 +350,73 @@ function itemHtml(it) {
     <div style="min-width:0"><div class="name" title="${esc(it.path)}">${esc(it.file)}</div><div class="meta ${it.state === 'failed' ? 'err' : ''}">${meta}</div>${bar}</div>
     <div class="actions"><span class="chip ${it.state}">${STATE_TXT[it.state] || it.state}</span>${acts}</div></div>`;
 }
+
+// ---- live preview (the demo is rendered hidden and played while it is written) ----------------
+const live = { id: 0, hls: null, attached: false };
+
+function liveItem() { return S && S.items ? S.items.find(i => i.id === live.id) : null; }
+
+function openLive(id, name) {
+  live.id = id;
+  live.attached = false;
+  if (live.hls) { live.hls.destroy(); live.hls = null; }
+  const v = $('liveVideo');
+  v.pause(); v.removeAttribute('src'); v.load();
+  v.style.display = 'none';
+  $('liveName').textContent = name || '';
+  $('liveWait').style.display = 'grid';
+  $('liveInfo').textContent = '';
+  $('liveFolder').style.display = 'none';
+  $('live').classList.add('on');
+  updateLive();
+}
+
+function hideLive() { $('live').classList.remove('on'); $('liveVideo').pause(); }
+
+// hls.js plays the playlist that ffmpeg keeps extending; it only exists once the first segment is
+// written, so this is retried on every poll until it does.
+async function tryAttachLive() {
+  if (live.attached) return;
+  let r = null;
+  try { r = await fetch('/stream/index.m3u8', { cache: 'no-store' }); } catch { return; }
+  if (!r.ok) return;
+  live.attached = true;
+  const v = $('liveVideo');
+  if (window.Hls && Hls.isSupported()) {
+    live.hls = new Hls({ startPosition: 0, liveSyncDurationCount: 1000, liveMaxLatencyDurationCount: 3600 });
+    live.hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) setTimeout(() => live.hls && live.hls.startLoad(), 800); });
+    live.hls.loadSource('/stream/index.m3u8');
+    live.hls.attachMedia(v);
+  } else {
+    v.src = '/stream/index.m3u8';
+  }
+  v.style.display = 'block';
+  $('liveWait').style.display = 'none';
+  v.play().catch(() => {});
+}
+
+function updateLive() {
+  if (!live.id) return;
+  const it = liveItem();
+  if (!it) return;
+  const active = ['loading', 'recording', 'encoding'].includes(it.state);
+  const fps = it.renderMs > 0 ? Math.round(it.frames * 1000 / it.renderMs) : 0;
+  $('liveDot').className = 'dot ' + (active ? 'busy' : it.state === 'done' ? 'ok' : 'bad');
+  if (it.state === 'loading') $('liveInfo').textContent = 'chargement de la démo…';
+  else if (it.state === 'recording') $('liveInfo').textContent = `${it.frames} / ${it.expected || '?'} images · ${fps} img/s`;
+  else if (it.state === 'encoding') $('liveInfo').textContent = 'finalisation de la vidéo…';
+  else if (it.state === 'done') $('liveInfo').innerHTML = `rendu terminé en <b>${hms(it.renderMs / 1000)}</b> · ${fps} img/s`;
+  else if (it.state === 'failed') $('liveInfo').textContent = it.message || 'échec';
+  $('liveStop').style.display = active ? '' : 'none';
+  $('liveFolder').style.display = it.state === 'done' ? '' : 'none';
+  if (active && it.state === 'recording') tryAttachLive();
+  if (it.state === 'done' && !live.attached) tryAttachLive(); // very short demo: over before we played it
+  if (!active && it.state !== 'done') $('liveWait').style.display = 'none';
+}
+
+$('liveHide').onclick = hideLive;
+$('liveStop').onclick = async () => { await api('cancel', {}); };
+$('liveFolder').onclick = () => api('open', { id: live.id, folder: true });
 
 function setSeg(id, v) { for (const b of $(id).children) b.classList.toggle('on', b.dataset.v == v); }
 function setSwitch(id, on) { $(id).querySelector('.switch').classList.toggle('on', !!on); }
@@ -357,7 +461,7 @@ function render() {
   for (const b of document.querySelectorAll('aside select, aside input, aside .seg button, #outBtn, #gameBtn, #ffBox button')) b.disabled = S.running;
 }
 
-async function refresh() { try { S = await api('state'); if (!S.settings.ffUi && !S.running) return saveFf({}); render(); } catch (e) { $('status').textContent = 'P2Render ne répond plus.'; } }
+async function refresh() { try { S = await api('state'); if (!S.settings.ffUi && !S.running) return saveFf({}); render(); updateLive(); } catch (e) { $('status').textContent = 'P2Render ne répond plus.'; } }
 async function save(patch) { if (!S || S.running) return; Object.assign(S.settings, patch); render(); await api('settings', S.settings); refresh(); }
 
 for (const id of ['fps', 'codec', 'quality'])
@@ -490,6 +594,14 @@ $('queue').addEventListener('click', async e => {
     const id = +b.dataset.id, act = b.dataset.act;
     if (act === 'play') await api('open', { id });
     else if (act === 'folder') await api('open', { id, folder: true });
+    else if (act === 'showlive') { const it = S.items.find(i => i.id === id); openLive(id, it && it.file); return; }
+    else if (act === 'preview') {
+      const r = await api('preview', { id });
+      if (r.error) { toast(r.error); return refresh(); }
+      const it = S.items.find(i => i.id === id);
+      openLive(id, it && it.file);
+      return refresh();
+    }
     else await api(act, { id });
     return refresh();
   }

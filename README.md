@@ -18,6 +18,13 @@ P2Render démarre Portal 2, rend les démos l'une après l'autre (progression, v
 restant affichés), puis ferme le jeu si l'option est cochée. Une fois une démo terminée, ses
 boutons permettent de lire la vidéo ou de l'afficher dans son dossier.
 
+### Aperçu en direct
+
+Le bouton **▷** d'une démo (« Aperçu en direct ») rend cette démo seule et l'affiche **pendant le
+rendu** : le jeu tourne masqué, l'image et le son arrivent au fur et à mesure (flux HLS lu par
+hls.js), et à la fin la vidéo complète est assemblée normalement dans le dossier des vidéos. On peut
+fermer l'aperçu (le rendu continue), l'arrêter, ou se déplacer dans la vidéo une fois terminée.
+
 ## Vitesse
 
 Mesures sur un Ryzen 7 5700X avec une carte NVIDIA, sur une démo de 12,2 s à 60 images/s :

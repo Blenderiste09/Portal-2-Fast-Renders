@@ -34,7 +34,8 @@ then `re/notes.md`.
 app/                  P2Render.exe (x64): local HTTP server + Edge --app window, queue, settings
   main.cpp            settings (<exe>\data\settings.ini, portable), Steam library lookup, demo
                       header parsing, job worker, native file dialogs, JSON API
-  ui/index.html       the whole interface (vanilla HTML/CSS/JS, polls /api/state every 500 ms)
+  ui/index.html       the whole interface (vanilla HTML/CSS/JS, polls /api/state every 500 ms);
+                      hls.min.js (vendored) plays the live preview stream
 launcher/launch.cpp   p2r_launch.exe (x86): starts portal2.exe suspended, parks it on its entry point,
                       LoadLibraryW(p2r_core.dll) through a remote thread, resumes
 src/                  p2r_core.dll (x86), injected into the game
@@ -88,10 +89,12 @@ frames in ~1.3 s, the MP4 in `dist\videos_out` (portable default; the setting ca
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
 `a2_228.dem`) must fail fast with "la démo n'a pas démarré". Check a video with `tools/preview`.
 
-API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|quit-game`.
-`POST /api/visualise {path,dir,out,ffArgs,ffmpegPath,width,height,fps}` renders one demo **hidden** and
-has ffmpeg write a live stream (HLS playlist or fragmented MP4) into `dir`: the demo can be watched
-while it renders. Used by the POC below.
+API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|preview|quit-game`.
+`POST /api/preview {id}` renders that demo **hidden** while ffmpeg writes an HLS stream into
+`<data>\stream` (served at `GET /stream/*`, played with hls.js in the interface), then remuxes it
+(`-c copy`) into the usual MP4 in the videos folder. The old "visible game window" mode is gone.
+`POST /api/visualise {path,dir,out,ffArgs,ffmpegPath,width,height,fps}` is the streaming POC's
+variant: it brings its own ffmpeg arguments and produces no final file. Used by the POC below.
 
 POC « visualisation en direct » (hors dépôt) : `D:\OpenCode\P2Render-POC` — page + petit serveur node
 qui pilote P2Render.exe (`--no-window`) et sert le flux qui grossit (HLS via hls.js ou MP4 fragmenté

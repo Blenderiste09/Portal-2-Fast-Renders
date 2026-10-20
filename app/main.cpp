@@ -308,7 +308,6 @@ static wstring GameDir()
 
 // ---------------------------------------------------------------------------------------------
 // ffmpeg (advanced mode): chosen path, else the copy P2Render downloaded, else PATH.
-
 static wstring FindFileUnder(const wstring& dir, const wchar_t* name, int depth)
 {
     if (FileExists(dir + L"\\" + name)) return dir + L"\\" + name;
@@ -385,6 +384,48 @@ static bool RunAndWait(const wstring& cmd, DWORD timeoutMs)
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return code == 0;
+}
+
+// Is the GPU H.264 encoder usable? Probed once: h264_nvenc needs a recent driver, libx264 always
+// works but is slower (the render waits for it).
+static bool NvencUsable(const wstring& ffmpeg)
+{
+    static int cached = -1; // -1 unknown, 0 no, 1 yes
+    if (cached < 0) {
+        wstring cmd = L"\"" + ffmpeg + L"\" -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x240:rate=30 "
+                                  L"-frames:v 2 -c:v h264_nvenc -f null -";
+        cached = RunAndWait(cmd, 30000) ? 1 : 0;
+        Log("live preview: %s encoder", cached ? "h264_nvenc" : "libx264 (no nvenc)");
+    }
+    return cached == 1;
+}
+
+// ffmpeg output options of the live stream: HLS playlist + 2 s segments, exactly what hls.js needs
+// to play a file that is still being written.
+static wstring StreamArgs(const Settings& s, const wstring& ffmpeg, const wstring& dir)
+{
+    bool nv = NvencUsable(ffmpeg);
+    wstring v;
+    if (s.codec == "hevc")
+        v = nv ? L"-c:v hevc_nvenc -preset p5 -tune hq -rc vbr -cq 22 -b:v 0 -pix_fmt yuv420p"
+               : L"-c:v libx265 -preset veryfast -crf 22 -pix_fmt yuv420p";
+    else
+        v = nv ? L"-c:v h264_nvenc -preset p5 -tune hq -rc vbr -cq 21 -b:v 0 -pix_fmt yuv420p"
+               : L"-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p";
+    return v + L" -c:a aac -b:a 192k -f hls -hls_time 2 -hls_list_size 0 -hls_playlist_type event "
+               L"-hls_flags independent_segments+temp_file -hls_segment_filename \"" + dir + L"\\seg%05d.ts\"";
+}
+
+// Removes the files a previous live preview left in its folder.
+static void ClearStreamDir(const wstring& dir)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) DeleteFileW((dir + L"\\" + fd.cFileName).c_str());
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
 }
 
 // Downloads the latest release build of ffmpeg (BtbN, win64, GPL, shared libraries ~85 MB) into
@@ -555,15 +596,17 @@ static string g_gameState = "stopped"; // stopped | starting | ready | busy
 static DWORD g_gamePid;
 static std::atomic<DWORD> g_lastPoll;
 
-// Live "Visualiser" job (POC): one demo rendered hidden while ffmpeg writes a live stream (HLS /
-// fragmented MP4) into a folder owned by the caller, which serves it to its player.
+// Live preview: one demo rendered hidden while ffmpeg writes a stream (HLS) that the interface
+// plays. Started from the interface (/api/preview, the app builds the ffmpeg arguments) or by the
+// streaming POC (/api/visualise, which brings its own).
 struct StreamSpec {
     bool active = false;
     int id = 0;              // item id this applies to
     int width = 1280, height = 720, fps = 60;
     wstring dir, out;        // output folder + name of the stream file (playlist or .mp4)
     wstring ffmpegPath;      // empty = auto
-    wstring ffArgs;          // ffmpeg output options (encoders + muxer), see the POC
+    wstring ffArgs;          // ffmpeg output options (encoders + muxer)
+    wstring finalPath;       // empty = no remux; else the MP4 assembled from the stream at the end
 };
 static StreamSpec g_stream;  // guarded by g_mx
 
@@ -892,7 +935,25 @@ static bool RenderItem(int id)
             }
         }
         if (js == JOB_DONE) {
-            finish(ItemState::Done, "", out);
+            wstring final = out;
+            if (stream.active && !stream.finalPath.empty()) {
+                // The stream we just watched is the video: assemble the usual MP4 from it (copy, no
+                // re-encoding) so a preview also leaves a file in the videos folder.
+                SetStatus("Assemblage de la vidéo…");
+                wstring playlist = stream.dir + L"\\" + stream.out;
+                wstring cmd = L"\"" + ffmpeg + L"\" -hide_banner -loglevel error -y -i \"" + playlist + L"\" -c copy "
+                                           L"-movflags +faststart \"" + stream.finalPath + L"\"";
+                DWORD t0 = GetTickCount();
+                if (RunAndWait(cmd, 1800000) && FileExists(stream.finalPath)) {
+                    Log("preview remux in %.1f s: %s", (GetTickCount() - t0) / 1000.0, Narrow(stream.finalPath).c_str());
+                    final = stream.finalPath;
+                } else {
+                    Log("preview remux failed, the stream stays in %s", Narrow(stream.dir).c_str());
+                    finish(ItemState::Failed, "video assemblée impossible (le flux reste dans data\\stream)");
+                    break;
+                }
+            }
+            finish(ItemState::Done, "", final);
             break;
         }
         if (js == JOB_FAILED) {
@@ -1067,7 +1128,8 @@ static string StateJson()
              ",\"map\":" + Q(i.info.map) + ",\"seconds\":" + std::to_string(i.info.seconds) + ",\"state\":" + Q(StateName(i.state)) +
              ",\"frames\":" + std::to_string(i.frames) + ",\"expected\":" + std::to_string(i.expected) +
              ",\"encoded\":" + std::to_string(i.encoded) + ",\"renderMs\":" + std::to_string(i.renderMs) +
-             ",\"message\":" + Q(i.message) + ",\"output\":" + Q(i.output) + "}";
+             ",\"message\":" + Q(i.message) + ",\"output\":" + Q(i.output) +
+             ",\"preview\":" + (g_stream.active && g_stream.id == i.id ? "true" : "false") + "}";
     }
     j += "]}";
     return j;
@@ -1077,6 +1139,28 @@ static string Handle(const Request& r, int& code, const char*& type)
 {
     code = 200;
     type = "application/json; charset=utf-8";
+    if (r.path.rfind("/stream/", 0) == 0) {
+        // Live preview stream (HLS playlist and segments written by ffmpeg in <data>\stream).
+        string name = r.path.substr(8);
+        if (name.empty() || name.find("..") != string::npos || name.find('/') != string::npos || name.find('\\') != string::npos) {
+            code = 404;
+            return "";
+        }
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (g_dataDir + L"\\stream\\" + Widen(name)).c_str(), L"rb") || !f) {
+            code = 404;
+            return "";
+        }
+        string data;
+        char buf[65536];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) data.append(buf, n);
+        fclose(f);
+        bool m3u8 = name.size() > 5 && name.compare(name.size() - 5, 5, ".m3u8") == 0;
+        bool ts = name.size() > 3 && name.compare(name.size() - 3, 3, ".ts") == 0;
+        type = m3u8 ? "application/vnd.apple.mpegurl" : ts ? "video/mp2t" : "application/octet-stream";
+        return data;
+    }
     if (r.path.rfind("/api/", 0) != 0) {
         // Static interface files.
         string p = r.path == "/" ? "/index.html" : r.path;
@@ -1214,6 +1298,48 @@ static string Handle(const Request& r, int& code, const char*& type)
                 it->message.clear();
                 it->frames = it->encoded = it->renderMs = 0;
             }
+        return "{\"ok\":true}";
+    }
+    if (r.path == "/api/preview" && r.method == "POST") {
+        // Live preview of one demo ({"id"}): rendered hidden, streamed as HLS into <data>\stream,
+        // played by the interface while it renders, then remuxed into the usual MP4.
+        std::lock_guard<std::mutex> l(g_mx);
+        int id = JsonInt(b, "id");
+        size_t idx = g_items.size();
+        for (size_t i = 0; i < g_items.size(); ++i)
+            if (g_items[i].id == id) idx = i;
+        if (idx == g_items.size()) return "{\"error\":\"démo inconnue\"}";
+        if (g_running) return "{\"error\":\"un rendu est déjà en cours\"}";
+        wstring ffmpeg = FfmpegPath();
+        if (ffmpeg.empty()) return "{\"error\":\"ffmpeg introuvable : télécharge-le dans les réglages (Avancé)\"}";
+        wstring dir = g_dataDir + L"\\stream";
+        SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+        ClearStreamDir(dir);
+        StreamSpec sp;
+        sp.active = true;
+        sp.id = id;
+        sp.width = g_set.width;
+        sp.height = g_set.height;
+        sp.fps = g_set.fps;
+        sp.dir = dir;
+        sp.out = L"index.m3u8";
+        sp.ffmpegPath = ffmpeg;
+        sp.ffArgs = StreamArgs(g_set, ffmpeg, dir);
+        SHCreateDirectoryExW(nullptr, g_set.outDir.c_str(), nullptr);
+        sp.finalPath = UniqueOutput(g_set.outDir, StripExt(FileName(g_items[idx].path)), L"mp4");
+        g_stream = sp;
+        Item again = g_items[idx];          // this demo goes first, and is rendered again
+        again.state = ItemState::Pending;
+        again.frames = again.encoded = again.renderMs = 0;
+        again.message.clear();
+        again.output.clear();
+        g_items.erase(g_items.begin() + idx);
+        g_items.insert(g_items.begin(), again);
+        g_running = true;
+        g_cancel = false;
+        g_status = "Aperçu en direct";
+        Log("preview %d: %s -> %s", id, Narrow(again.path).c_str(), Narrow(sp.finalPath).c_str());
+        std::thread(Worker).detach();
         return "{\"ok\":true}";
     }
     if (r.path == "/api/visualise" && r.method == "POST") {
@@ -1491,10 +1617,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
     }
 
     // Lifetime: until the Edge window closes, or the page stops polling (closed tab, other browser):
-    // 20 s without a poll while idle (10 min headless). Never while a render runs.
+    // 20 s without a poll while idle (10 min headless). Never while a render runs. Edge may hand the
+    // window over to a browser process that is already running and exit at once: only a process that
+    // lived a moment means the window was really closed.
     g_lastPoll = GetTickCount();
+    DWORD edgeStart = GetTickCount();
     for (;;) {
-        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0 && !g_running) break;
+        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0 && !g_running && GetTickCount() - edgeStart > 3000) break;
         if (!edge) Sleep(500);
         DWORD idle = GetTickCount() - g_lastPoll;
         if (!g_running && idle > (headless ? 600000u : 20000u)) break;
