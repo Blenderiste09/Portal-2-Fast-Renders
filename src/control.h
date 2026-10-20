@@ -5,7 +5,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { P2R_CTRL_MAGIC = 0x4C525443, P2R_CTRL_VERSION = 1 };
+enum { P2R_CTRL_MAGIC = 0x4C525443, P2R_CTRL_VERSION = 2 };
 
 enum P2RCoreState : int32_t {
     CORE_STARTING = 0,   // injected, engine not up yet
@@ -32,6 +32,11 @@ struct P2RJob {
     int32_t codec;           // P2RCodec (shared.h)
     int32_t bitrate_kbps;    // 0 = from the resolution
     int32_t show_window;     // 0 = do not present while rendering (faster)
+    // Advanced mode (ffmpeg), see shared.h.
+    int32_t use_ffmpeg;
+    wchar_t ffmpeg_path[520];
+    wchar_t ff_video_args[1024];
+    wchar_t ff_audio_args[256];
 };
 
 struct P2RControl {

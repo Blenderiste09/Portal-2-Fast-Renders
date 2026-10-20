@@ -20,6 +20,9 @@
 #include <stdio.h>
 #include <wchar.h>
 
+#include <string>
+#include <vector>
+
 #include "../src/shared.h"
 
 template <class T> struct Com {
@@ -103,6 +106,7 @@ static int InitVideo(Video& v, const wchar_t* path)
     Log("shared textures: %u x %ux%u format %d bind 0x%x", m->num_slots, td.Width, td.Height, td.Format, td.BindFlags);
     D3D11_QUERY_DESC qd = {D3D11_QUERY_EVENT, 0};
     CHECK(v.dev->CreateQuery(&qd, &v.query));
+    if (m->use_ffmpeg) return 0; // the ffmpeg path (below) uses its own staging textures
 
     CHECK(MFCreateDXGIDeviceManager(&v.resetToken, &v.mgr));
     CHECK(v.mgr->ResetDevice(v.dev, v.resetToken));
@@ -180,6 +184,144 @@ static int EncodeFrame(Video& v, int index)
     sample->SetSampleTime(t0);
     sample->SetSampleDuration(t1 - t0);
     CHECK(v.writer->WriteSample(v.stream, sample));
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Advanced mode: ffmpeg. Each slot is copied into a staging texture, read back and piped to
+// ffmpeg as raw BGRA (the only CPU copy of the pipeline, in this x64 process, off the game).
+
+static std::wstring g_ffLog;
+
+struct Ffmpeg {
+    HANDLE proc = nullptr;
+    HANDLE in = nullptr;  // write end of ffmpeg's stdin
+    Com<ID3D11Texture2D> staging[3];
+    std::vector<char> row;
+};
+
+// Runs ffmpeg with the given arguments; stdin = pipe (when in != null), stderr appended to
+// p2r_ffmpeg.log next to the encoder.
+static bool StartFfmpeg(const std::wstring& args, HANDLE* in, HANDLE* proc)
+{
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
+    HANDLE rd = nullptr, wr = nullptr;
+    if (in && !CreatePipe(&rd, &wr, &sa, 64 << 20)) return false;
+    if (wr) SetHandleInformation(wr, HANDLE_FLAG_INHERIT, 0);
+    HANDLE log = CreateFileW(g_ffLog.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_ALWAYS, 0, nullptr);
+    STARTUPINFOW si = {sizeof(si)};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = rd ? rd : GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = log;
+    si.hStdError = log;
+    std::wstring cmd = L"\"" + std::wstring(g_shm->ffmpeg_path) + L"\" " + args;
+    Log("ffmpeg %ls", args.c_str());
+    if (log != INVALID_HANDLE_VALUE) {
+        char utf8[4096] = {};
+        WideCharToMultiByte(CP_UTF8, 0, args.c_str(), -1, utf8, sizeof(utf8) - 1, nullptr, nullptr);
+        std::string line = std::string("\r\n> ffmpeg ") + utf8 + "\r\n";
+        DWORD w;
+        WriteFile(log, line.data(), (DWORD)line.size(), &w, nullptr);
+    }
+    std::vector<wchar_t> cl(cmd.begin(), cmd.end());
+    cl.push_back(0);
+    PROCESS_INFORMATION pi = {};
+    BOOL ok = CreateProcessW(g_shm->ffmpeg_path, cl.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+                             nullptr, nullptr, &si, &pi);
+    if (rd) CloseHandle(rd);
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    if (!ok) {
+        if (wr) CloseHandle(wr);
+        Log("cannot start ffmpeg (%lu): %ls", GetLastError(), g_shm->ffmpeg_path);
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    *proc = pi.hProcess;
+    if (in) *in = wr;
+    return true;
+}
+
+// Last non-empty line of p2r_ffmpeg.log, for the error message shown to the user.
+static std::string FfmpegLastLine()
+{
+    FILE* f = _wfsopen(g_ffLog.c_str(), L"rb", _SH_DENYNO);
+    if (!f) return "ffmpeg a échoué";
+    std::string all;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) all.append(buf, n);
+    fclose(f);
+    // The first message of the last ffmpeg run is usually the cause (the next ones are consequences).
+    size_t block = all.rfind("\n> ffmpeg");
+    size_t pos = block == std::string::npos ? 0 : all.find('\n', block + 1);
+    while (pos != std::string::npos && pos < all.size()) {
+        size_t start = pos + 1, e = all.find('\n', start);
+        std::string l = all.substr(start, (e == std::string::npos ? all.size() : e) - start);
+        while (!l.empty() && (l.back() == 13 || l.back() == 10)) l.pop_back();
+        // Drop the "[codec @ 0x...] " prefix.
+        if (!l.empty() && l[0] == '[' && l.find("] ") != std::string::npos) l = l.substr(l.find("] ") + 2);
+        if (!l.empty() && l.find("Guessed Channel Layout") == std::string::npos) return "ffmpeg : " + l.substr(0, 220);
+        pos = e;
+    }
+    return "ffmpeg a échoué";
+}
+
+static int WaitFfmpeg(HANDLE proc)
+{
+    WaitForSingleObject(proc, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(proc, &code);
+    CloseHandle(proc);
+    return (int)code;
+}
+
+static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* tmpVideo)
+{
+    P2RShared* m = g_shm;
+    D3D11_TEXTURE2D_DESC td;
+    v.slots[0]->GetDesc(&td);
+    td.Usage = D3D11_USAGE_STAGING;
+    td.BindFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    td.MiscFlags = 0;
+    for (auto& s : f.staging) CHECK(v.dev->CreateTexture2D(&td, nullptr, &s));
+    wchar_t args[2048];
+    swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s -an \"%s\"",
+               m->width, m->height, m->fps, m->ff_video_args, tmpVideo);
+    if (!StartFfmpeg(args, &f.in, &f.proc)) return Fail("impossible de lancer ffmpeg (%ls)", m->ffmpeg_path);
+    return 0;
+}
+
+static int EncodeFrameFF(Video& v, Ffmpeg& f, int index, HANDLE semFree)
+{
+    P2RShared* m = g_shm;
+    ID3D11Texture2D* st = f.staging[index % 3];
+    v.ctx->CopyResource(st, v.slots[index % m->num_slots]);
+    v.ctx->End(v.query);
+    while (v.ctx->GetData(v.query, nullptr, 0, 0) == S_FALSE) YieldProcessor();
+    ReleaseSemaphore(semFree, 1, nullptr); // the slot is free once copied
+    D3D11_MAPPED_SUBRESOURCE map;
+    CHECK(v.ctx->Map(st, 0, D3D11_MAP_READ, 0, &map));
+    const char* p = (const char*)map.pData;
+    DWORD rowBytes = m->width * 4;
+    bool ok = true;
+    if (map.RowPitch == rowBytes) {
+        DWORD total = rowBytes * m->height, off = 0, w = 0;
+        while (ok && off < total) {
+            ok = WriteFile(f.in, p + off, total - off, &w, nullptr) != 0;
+            off += w;
+        }
+    } else {
+        for (UINT y = 0; ok && y < m->height; ++y) {
+            DWORD off = 0, w = 0;
+            while (ok && off < rowBytes) {
+                ok = WriteFile(f.in, p + (size_t)y * map.RowPitch + off, rowBytes - off, &w, nullptr) != 0;
+                off += w;
+            }
+        }
+    }
+    v.ctx->Unmap(st, 0);
+    if (!ok) return Fail("%s", FfmpegLastLine().c_str());
     return 0;
 }
 
@@ -299,15 +441,17 @@ static int Run(unsigned id)
     HANDLE game = OpenProcess(SYNCHRONIZE, FALSE, id / 1000);
     if (!semReady || !semFree || !evStarted || !game) return Fail("cannot open the synchronisation objects");
 
+    bool ff = m->use_ffmpeg != 0;
     wchar_t videoPath[540];
-    swprintf_s(videoPath, L"%s.video.mp4", m->out_path);
+    swprintf_s(videoPath, ff ? L"%s.video.mkv" : L"%s.video.mp4", m->out_path);
     DeleteFileW(videoPath);
 
     CHECK(MFStartup(MF_VERSION, MFSTARTUP_LITE));
     int frames = 0;
     {
         Video v;
-        if (InitVideo(v, videoPath)) {
+        Ffmpeg f;
+        if (InitVideo(v, videoPath) || (ff && InitFfmpeg(v, f, videoPath))) {
             SetEvent(evStarted);
             return 1;
         }
@@ -318,15 +462,28 @@ static int Run(unsigned id)
         HANDLE waits[2] = {semReady, game};
         for (;;) {
             DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-            if (w != WAIT_OBJECT_0) return Fail("the game exited during the render");
+            if (w != WAIT_OBJECT_0) return Fail("le jeu s'est fermé pendant le rendu");
             if (m->ended && frames >= m->total_frames) break;
-            if (EncodeFrame(v, frames)) return 1;
-            ReleaseSemaphore(semFree, 1, nullptr);
+            if (ff) {
+                if (EncodeFrameFF(v, f, frames, semFree)) {
+                    TerminateProcess(f.proc, 1);
+                    return 1;
+                }
+            } else {
+                if (EncodeFrame(v, frames)) return 1;
+                ReleaseSemaphore(semFree, 1, nullptr);
+            }
             m->frames_encoded = ++frames;
             if (frames % 600 == 0) Log("%d frames", frames);
         }
         m->enc_state = P2R_ENC_MUXING;
-        CHECK(v.writer->Finalize());
+        if (ff) {
+            CloseHandle(f.in);
+            int code = WaitFfmpeg(f.proc);
+            if (code != 0) return Fail("%s", FfmpegLastLine().c_str());
+        } else {
+            CHECK(v.writer->Finalize());
+        }
         DWORD ms = GetTickCount() - t0;
         Log("video done: %d frames in %.1f s (%.0f fps including waits for the game)", frames, ms / 1000.0,
             ms ? frames * 1000.0 / ms : 0.0);
@@ -337,8 +494,31 @@ static int Run(unsigned id)
         return Fail("no frame");
     }
     DeleteFileW(m->out_path);
-    if (WaitFileClosed(m->wav_path, 30000)) {
-        DWORD t0 = GetTickCount();
+    bool wav = WaitFileClosed(m->wav_path, 30000);
+    DWORD t0 = GetTickCount();
+    if (ff) {
+        // ffmpeg mux: video copied, audio encoded with the chosen options (or the video alone,
+        // remuxed into the chosen container).
+        wchar_t args[2048];
+        if (wav)
+            swprintf_s(args, L"-hide_banner -loglevel warning -y -i \"%s\" -i \"%s\" -map 0:v -map 1:a -c:v copy %s \"%s\"",
+                       videoPath, m->wav_path, m->ff_audio_args, m->out_path);
+        else
+            swprintf_s(args, L"-hide_banner -loglevel warning -y -i \"%s\" -c copy \"%s\"", videoPath, m->out_path);
+        HANDLE proc = nullptr;
+        int code = StartFfmpeg(args, nullptr, &proc) ? WaitFfmpeg(proc) : 1;
+        if (code != 0) {
+            std::string why = FfmpegLastLine();
+            Log("ffmpeg mux failed (%s), keeping the video without sound as .mkv", why.c_str());
+            std::wstring keep = std::wstring(m->out_path) + L".mkv";
+            DeleteFileW(m->out_path);
+            MoveFileExW(videoPath, keep.c_str(), MOVEFILE_REPLACE_EXISTING);
+            return Fail("assemblage du son impossible (%s) ; vidéo sans son gardée en .mkv", why.c_str());
+        }
+        DeleteFileW(videoPath);
+        if (wav) DeleteFileW(m->wav_path);
+        Log("ffmpeg mux done in %.1f s", (GetTickCount() - t0) / 1000.0);
+    } else if (wav) {
         if (Mux(videoPath, m->wav_path, m->out_path) == 0) {
             Log("muxed with %ls in %.1f s", m->wav_path, (GetTickCount() - t0) / 1000.0);
             DeleteFileW(videoPath);
@@ -365,6 +545,9 @@ int wmain(int argc, wchar_t** argv)
     DWORD n = GetModuleFileNameW(nullptr, logPath, MAX_PATH);
     while (n > 0 && logPath[n - 1] != L'\\') --n;
     wcscpy_s(logPath + n, MAX_PATH - n, L"p2r_encoder.log");
+    g_ffLog = logPath;
+    g_ffLog.replace(g_ffLog.size() - 15, 15, L"p2r_ffmpeg.log");
+    DeleteFileW(g_ffLog.c_str());
     g_log = _wfsopen(logPath, L"w", _SH_DENYNO);
     if (argc < 2) {
         Log("usage: p2r_encoder <id> (started by the game)");

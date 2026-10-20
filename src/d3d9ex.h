@@ -11,10 +11,12 @@
 
 struct IDirect3D9Ex;
 struct IDirect3DDevice9Ex;
+struct HWND__;
 
 namespace d3d9ex {
 void Init();                    // reads the command line (-nod3d9ex disables everything)
 bool Enabled();
 void HookD3D9Ex(IDirect3D9Ex* d3d);
 IDirect3DDevice9Ex* Device();   // the game's device once created (null before)
+::HWND__* GameWindow();         // its focus window
 }

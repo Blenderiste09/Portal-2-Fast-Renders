@@ -116,6 +116,13 @@ int wmain(int argc, wchar_t** argv)
         if (quote) wcscat_s(cmd, L"\"");
     }
     STARTUPINFOW si = {sizeof(si)};
+    // P2R_HIDDEN=1 (P2Render invisible rendering): the game's first ShowWindow keeps it hidden; the
+    // core hides it again whenever the game shows it (same variable, inherited).
+    wchar_t hidden[8] = {};
+    if (GetEnvironmentVariableW(L"P2R_HIDDEN", hidden, 8) && hidden[0] == L'1') {
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+    }
     PROCESS_INFORMATION pi = {};
     if (!CreateProcessW(exe, cmd, nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, game, &si, &pi)) {
         fprintf(stderr, "CreateProcess failed (%lu)\n", GetLastError());

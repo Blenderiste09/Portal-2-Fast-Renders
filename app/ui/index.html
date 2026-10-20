@@ -107,6 +107,17 @@ select:focus, input:focus { border-color: var(--blue); }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #c7d0dc; transition: .15s; }
 .switch.on { background: var(--blue2); } .switch.on::after { left: 21px; background: #fff; }
 .sep { height: 1px; background: var(--line); margin: 8px 0; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row2 .field { margin: 8px 0 14px; }
+.cmd { background: #0b0f14; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: 12px/1.5 "Cascadia Code", Consolas, monospace; color: #b9c7da; word-break: break-all; user-select: text; max-height: 130px; overflow: auto; }
+.cmd b { color: var(--orange); font-weight: 500; }
+.ffbox { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #0f141b; border: 1px solid var(--line); font-size: 12.5px; margin: 6px 0 4px; }
+.ffbox .grow { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ffbox .bar { flex: 1; margin: 0; }
+.ffbox.missing { border-color: #6b4a1e; background: #1d160c; flex-wrap: wrap; }
+.ffbox.missing .grow { flex-basis: 100%; white-space: normal; }
+.warn { color: var(--yellow); }
+optgroup { color: var(--muted); }
 
 footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 16px; padding: 16px 26px 20px; max-width: 1280px; width: 100%; margin: 0 auto; }
 .status { flex: 1; color: var(--muted); }
@@ -167,20 +178,58 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
           <div class="seg" id="fps"><button data-v="30">30</button><button data-v="60">60</button><button data-v="120">120</button></div>
         </div>
         <div class="field">
-          <span class="label">Format vidéo</span>
-          <div class="seg" id="codec"><button data-v="h264">H.264</button><button data-v="hevc">HEVC (H.265)</button></div>
+          <span class="label">Encodage</span>
+          <div class="seg" id="mode"><button data-v="simple">Simple</button><button data-v="advanced">Avancé (ffmpeg)</button></div>
         </div>
-        <div class="field">
-          <span class="label">Qualité</span>
-          <div class="seg" id="quality"><button data-v="standard">Standard</button><button data-v="high">Haute</button><button data-v="max">Maximale</button></div>
-          <div class="hint" id="bitrate"></div>
+        <div id="simplePanel">
+          <div class="field">
+            <span class="label">Format vidéo</span>
+            <div class="seg" id="codec"><button data-v="h264">H.264</button><button data-v="hevc">HEVC (H.265)</button></div>
+          </div>
+          <div class="field">
+            <span class="label">Qualité</span>
+            <div class="seg" id="quality"><button data-v="standard">Standard</button><button data-v="high">Haute</button><button data-v="max">Maximale</button></div>
+            <div class="hint" id="bitrate"></div>
+          </div>
+        </div>
+        <div id="advPanel" style="display:none">
+          <div class="ffbox" id="ffBox"></div>
+          <div class="field">
+            <span class="label">Encodeur vidéo</span>
+            <select id="vcodec"></select>
+          </div>
+          <div class="row2">
+            <div class="field"><span class="label" id="presetLabel">Preset</span><select id="preset"></select></div>
+            <div class="field"><span class="label" id="qLabel">Qualité</span><input type="number" id="q"></div>
+          </div>
+          <div class="hint" id="qHint" style="margin-top:-6px"></div>
+          <div class="row2">
+            <div class="field"><span class="label">Format des pixels</span><select id="pixfmt"></select></div>
+            <div class="field"><span class="label">Son</span><select id="audio"></select></div>
+          </div>
+          <div class="field">
+            <span class="label">Conteneur</span>
+            <div class="seg" id="container"><button data-v="mp4">MP4</button><button data-v="mkv">MKV</button><button data-v="mov">MOV</button></div>
+          </div>
+          <div class="field">
+            <span class="label">Options ffmpeg en plus (vidéo)</span>
+            <input type="text" id="extra" placeholder="ex. -tune film -g 120 -vf eq=saturation=1.1" spellcheck="false">
+          </div>
+          <div class="field">
+            <span class="label">Commande générée</span>
+            <div class="cmd" id="cmdPreview"></div>
+          </div>
         </div>
         <div class="field">
           <span class="label">Dossier des vidéos</span>
           <div class="row"><div class="path" id="outDir"></div><button class="btn" id="outBtn">Changer</button><button class="btn icon-btn" id="outOpen" title="Ouvrir le dossier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button></div>
         </div>
         <div class="sep"></div>
-        <div class="toggle" id="tShow"><span>Afficher le rendu en direct<small>Plus lent : la fenêtre du jeu est rafraîchie</small></span><div class="switch"></div></div>
+        <div class="field">
+          <span class="label">Pendant le rendu</span>
+          <div class="seg" id="display"><button data-v="hidden">Jeu invisible</button><button data-v="preview">Aperçu en direct</button></div>
+          <div class="hint" id="displayHint"></div>
+        </div>
         <div class="toggle" id="tClose"><span>Fermer Portal 2 à la fin<small>Sinon le jeu reste ouvert pour les rendus suivants</small></span><div class="switch"></div></div>
         <div class="sep"></div>
         <div class="field">
@@ -286,7 +335,13 @@ function render() {
   $('bitrate').textContent = `≈ ${(st.bitrate / 1000).toFixed(0)} Mbit/s · encodage matériel de la carte graphique`;
   $('outDir').textContent = st.outDir; $('outDir').title = st.outDir;
   $('gameDir').textContent = g.path || 'introuvable : choisis le dossier'; $('gameDir').title = g.path;
-  setSwitch('tShow', st.showWindow); setSwitch('tClose', st.closeGame);
+  setSwitch('tClose', st.closeGame);
+  setSeg('display', st.showWindow ? 'preview' : 'hidden');
+  $('displayHint').textContent = st.showWindow ? 'La fenêtre du jeu reste visible : plus lent.' : 'Portal 2 tourne en arrière-plan sans fenêtre ni son : le plus rapide.';
+  setSeg('mode', st.advanced ? 'advanced' : 'simple');
+  $('simplePanel').style.display = st.advanced ? 'none' : '';
+  $('advPanel').style.display = st.advanced ? '' : 'none';
+  renderAdvanced();
 
   const pending = items.filter(i => i.state === 'pending').length;
   const go = $('goBtn');
@@ -294,10 +349,10 @@ function render() {
   else { go.textContent = pending ? `Lancer le rendu (${pending} démo${pending > 1 ? 's' : ''})` : 'Lancer le rendu'; go.className = 'go'; go.disabled = !pending || !g.found; }
   const cur = items.find(i => ['loading', 'recording', 'encoding'].includes(i.state));
   $('status').innerHTML = S.running && cur ? `<b>${esc(cur.file)}</b> · ${esc(STATE_TXT[cur.state])}` : esc(S.status);
-  for (const b of document.querySelectorAll('aside select, aside input, aside .seg button, #outBtn, #gameBtn')) b.disabled = S.running;
+  for (const b of document.querySelectorAll('aside select, aside input, aside .seg button, #outBtn, #gameBtn, #ffBox button')) b.disabled = S.running;
 }
 
-async function refresh() { try { S = await api('state'); render(); } catch (e) { $('status').textContent = 'P2Render ne répond plus.'; } }
+async function refresh() { try { S = await api('state'); if (!S.settings.ffUi && !S.running) return saveFf({}); render(); } catch (e) { $('status').textContent = 'P2Render ne répond plus.'; } }
 async function save(patch) { if (!S || S.running) return; Object.assign(S.settings, patch); render(); await api('settings', S.settings); refresh(); }
 
 for (const id of ['fps', 'codec', 'quality'])
@@ -311,7 +366,113 @@ for (const id of ['w', 'h']) {
   $(id).addEventListener('focus', () => editing = true);
   $(id).addEventListener('change', () => { editing = false; save({ width: +$('w').value, height: +$('h').value }); });
 }
-$('tShow').onclick = () => save({ showWindow: !S.settings.showWindow });
+$('display').addEventListener('click', e => { const v = e.target.dataset.v; if (v) save({ showWindow: v === 'preview' }); });
+$('mode').addEventListener('click', e => { const v = e.target.dataset.v; if (v) save({ advanced: v === 'advanced' }); });
+
+// ---- Advanced mode (ffmpeg) -----------------------------------------------------------------
+const X264P = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
+const NVP = [['p1', 'p1 (le plus rapide)'], ['p2', 'p2'], ['p3', 'p3'], ['p4', 'p4'], ['p5', 'p5'], ['p6', 'p6'], ['p7', 'p7 (la meilleure qualité)']];
+const CODECS = {
+  h264_nvenc: { group: 'Carte graphique NVIDIA (rapide)', label: 'H.264 – NVENC', presets: NVP, preset: 'p5', q: ['CQ', 0, 51, 19], qHint: 'Plus bas = meilleure qualité. 19 ≈ excellent.', pix: ['yuv420p', 'yuv444p'],
+    args: (p, q) => `-c:v h264_nvenc -preset ${p} -tune hq -rc vbr -cq ${q} -b:v 0` },
+  hevc_nvenc: { group: 'Carte graphique NVIDIA (rapide)', label: 'HEVC – NVENC', presets: NVP, preset: 'p5', q: ['CQ', 0, 51, 21], qHint: 'Plus bas = meilleure qualité.', pix: ['yuv420p', 'p010le', 'yuv444p'], hevc: true,
+    args: (p, q) => `-c:v hevc_nvenc -preset ${p} -tune hq -rc vbr -cq ${q} -b:v 0` },
+  av1_nvenc: { group: 'Carte graphique NVIDIA (rapide)', label: 'AV1 – NVENC (RTX 40 et plus)', presets: NVP, preset: 'p5', q: ['CQ', 0, 63, 28], qHint: 'Plus bas = meilleure qualité.', pix: ['yuv420p', 'p010le'],
+    args: (p, q) => `-c:v av1_nvenc -preset ${p} -rc vbr -cq ${q} -b:v 0` },
+  libx264: { group: 'Processeur (plus lent)', label: 'H.264 – x264', presets: X264P.map(v => [v, v]), preset: 'medium', q: ['CRF', 0, 51, 18], qHint: '0 = sans perte, 18 ≈ visuellement sans perte, 23 = défaut.', pix: ['yuv420p', 'yuv444p', 'yuv420p10le'],
+    args: (p, q) => `-c:v libx264 -preset ${p} -crf ${q}` },
+  libx265: { group: 'Processeur (plus lent)', label: 'HEVC – x265', presets: X264P.map(v => [v, v]), preset: 'medium', q: ['CRF', 0, 51, 20], qHint: 'Plus bas = meilleure qualité, 28 = défaut.', pix: ['yuv420p', 'yuv420p10le', 'yuv444p'], hevc: true,
+    args: (p, q) => `-c:v libx265 -preset ${p} -crf ${q}` },
+  libsvtav1: { group: 'Processeur (plus lent)', label: 'AV1 – SVT-AV1', presets: [...Array(14).keys()].map(i => [String(i), i + (i === 0 ? ' (le plus lent)' : i === 13 ? ' (le plus rapide)' : '')]), preset: '8', q: ['CRF', 0, 63, 30], qHint: 'Plus bas = meilleure qualité.', pix: ['yuv420p', 'yuv420p10le'],
+    args: (p, q) => `-c:v libsvtav1 -preset ${p} -crf ${q}` },
+  prores_ks: { group: 'Montage', label: 'ProRes', presets: [['0', 'Proxy'], ['1', 'LT'], ['2', 'Standard'], ['3', 'HQ'], ['4', '4444'], ['5', '4444 XQ']], presetLabel: 'Profil', preset: '3', q: null, pix: ['yuv422p10le', 'yuv444p10le'],
+    args: p => `-c:v prores_ks -profile:v ${p} -vendor apl0` },
+  ffv1: { group: 'Montage', label: 'FFV1 (sans perte)', presets: null, q: null, pix: ['yuv444p', 'yuv420p', 'bgr0'],
+    args: () => '-c:v ffv1 -level 3 -slicecrc 1' },
+};
+const AUDIO = {
+  aac320: ['AAC 320 kbit/s', '-c:a aac -b:a 320k', ['mp4', 'mkv', 'mov']],
+  aac192: ['AAC 192 kbit/s', '-c:a aac -b:a 192k', ['mp4', 'mkv', 'mov']],
+  opus: ['Opus 256 kbit/s', '-c:a libopus -b:a 256k', ['mp4', 'mkv']],
+  flac: ['FLAC (sans perte)', '-c:a flac', ['mp4', 'mkv', 'mov']],
+  pcm: ['PCM 16 bits (sans compression)', '-c:a pcm_s16le', ['mkv', 'mov']],
+};
+const FF_DEFAULT = { vcodec: 'h264_nvenc', preset: 'p5', q: 19, pixfmt: 'yuv420p', audio: 'aac320', extra: '' };
+
+function ffState() { try { return Object.assign({}, FF_DEFAULT, JSON.parse(S.settings.ffUi || '{}')); } catch { return { ...FF_DEFAULT }; } }
+function buildFf(u, container) {
+  const c = CODECS[u.vcodec] || CODECS.libx264;
+  let v = c.args(u.preset, u.q) + ` -pix_fmt ${u.pixfmt}`;
+  if (c.hevc && container !== 'mkv') v += ' -tag:v hvc1';
+  if ((u.extra || '').trim()) v += ' ' + u.extra.trim();
+  const a = (AUDIO[u.audio] || AUDIO.aac320)[1];
+  return { v, a };
+}
+function fillSelect(sel, opts, value) {
+  const html = opts.map(o => typeof o === 'string' ? `<option value="${esc(o)}">${esc(o)}</option>` : `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join('');
+  if (sel._html !== html) { sel.innerHTML = html; sel._html = html; }
+  sel.value = value;
+}
+function renderAdvanced() {
+  const st = S.settings, ff = S.ffmpeg, u = ffState(), c = CODECS[u.vcodec] || CODECS.libx264;
+  const box = $('ffBox');
+  let html;
+  if (ff.downloading) html = `<span>Téléchargement de ffmpeg…</span><div class="bar"><div style="width:${ff.percent}%"></div></div><span>${ff.percent} %</span>`;
+  else if (ff.found) html = `<span style="color:var(--green)">●</span><span class="grow" title="${esc(ff.path)}">ffmpeg : ${esc(ff.path)}</span><button class="btn" data-ff="pick">Changer</button>`;
+  else html = `<span class="grow warn">ffmpeg n’est pas installé${ff.error ? ' (' + esc(ff.error) + ')' : ''}</span><button class="btn" data-ff="dl">Télécharger (~85 Mo)</button><button class="btn" data-ff="pick">Choisir…</button>`;
+  if (box._html !== html) { box.innerHTML = html; box._html = html; }
+  box.className = 'ffbox' + (ff.found || ff.downloading ? '' : ' missing');
+  const focused = document.activeElement;
+  if (focused && $('advPanel').contains(focused) && focused.tagName === 'INPUT') return updateCmd();
+  const groups = {};
+  for (const [k, d] of Object.entries(CODECS)) (groups[d.group] = groups[d.group] || []).push(`<option value="${k}">${esc(d.label)}</option>`);
+  const vhtml = Object.entries(groups).map(([g, o]) => `<optgroup label="${esc(g)}">${o.join('')}</optgroup>`).join('');
+  if ($('vcodec')._html !== vhtml) { $('vcodec').innerHTML = vhtml; $('vcodec')._html = vhtml; }
+  $('vcodec').value = u.vcodec;
+  $('preset').parentElement.style.visibility = c.presets ? '' : 'hidden';
+  if (c.presets) fillSelect($('preset'), c.presets, u.preset);
+  $('presetLabel').textContent = c.presetLabel || 'Preset';
+  $('q').parentElement.style.visibility = c.q ? '' : 'hidden';
+  if (c.q) { $('qLabel').textContent = c.q[0]; $('q').min = c.q[1]; $('q').max = c.q[2]; $('q').value = u.q; }
+  $('qHint').textContent = c.q ? c.qHint : '';
+  fillSelect($('pixfmt'), c.pix, u.pixfmt);
+  fillSelect($('audio'), Object.entries(AUDIO).filter(([, a]) => a[2].includes(st.container)).map(([k, a]) => [k, a[0]]), u.audio);
+  setSeg('container', st.container);
+  $('extra').value = u.extra || '';
+  updateCmd();
+}
+function updateCmd() {
+  const st = S.settings, u = ffState(), f = buildFf(u, st.container);
+  $('cmdPreview').innerHTML = `ffmpeg -f rawvideo -pix_fmt bgra -s ${st.width}x${st.height} -framerate ${st.fps} -i <i>(images du jeu)</i> <b>${esc(f.v)}</b> → vidéo, puis son : <b>${esc(f.a)}</b> → .${st.container}`;
+}
+function saveFf(patch) {
+  const u = Object.assign(ffState(), patch);
+  const c = CODECS[u.vcodec] || CODECS.libx264;
+  if (patch.vcodec) { u.preset = c.preset || ''; u.q = c.q ? c.q[3] : 0; u.pixfmt = c.pix[0]; }
+  if (c.pix.indexOf(u.pixfmt) < 0) u.pixfmt = c.pix[0];
+  let container = patch.container || S.settings.container;
+  if (patch.vcodec === 'prores_ks') container = 'mov';
+  if (patch.vcodec === 'ffv1') container = 'mkv';
+  delete u.container;
+  if (!AUDIO[u.audio] || !AUDIO[u.audio][2].includes(container)) u.audio = AUDIO.aac320[2].includes(container) ? 'aac320' : 'pcm';
+  const f = buildFf(u, container);
+  save({ ffUi: JSON.stringify(u), ffVideo: f.v, ffAudio: f.a, container });
+}
+$('vcodec').addEventListener('change', e => saveFf({ vcodec: e.target.value }));
+$('preset').addEventListener('change', e => saveFf({ preset: e.target.value }));
+$('pixfmt').addEventListener('change', e => saveFf({ pixfmt: e.target.value }));
+$('audio').addEventListener('change', e => saveFf({ audio: e.target.value }));
+$('q').addEventListener('change', e => { const c = CODECS[ffState().vcodec]; let v = Math.round(+e.target.value); if (c && c.q) v = Math.min(c.q[2], Math.max(c.q[1], v)); e.target.blur(); saveFf({ q: v }); });
+$('extra').addEventListener('change', e => { e.target.blur(); saveFf({ extra: e.target.value }); });
+$('container').addEventListener('click', e => { const v = e.target.dataset.v; if (v) saveFf({ container: v }); });
+$('ffBox').addEventListener('click', async e => {
+  const b = e.target.closest('[data-ff]');
+  if (!b) return;
+  if (b.dataset.ff === 'dl') await api('ffmpeg-download', {});
+  else { const r = await api('browse-ffmpeg', {}); if (r.error) toast(r.error); }
+  refresh();
+});
+
 $('tClose').onclick = () => save({ closeGame: !S.settings.closeGame });
 $('outBtn').onclick = async () => { await api('browse-out', {}); refresh(); };
 $('outOpen').onclick = () => api('open', { id: 0 });

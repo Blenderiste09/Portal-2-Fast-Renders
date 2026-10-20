@@ -45,7 +45,7 @@ $core = (Get-ChildItem (Join-Path $root "src") -Filter *.cpp | ForEach-Object { 
 Compile "x86" (Join-Path $build "core") "$common /LD $core /Fe:p2r_core.dll /link /DEBUG /OPT:REF /OPT:ICF kernel32.lib user32.lib psapi.lib"
 Compile "x86" (Join-Path $build "launch") "$common /DUNICODE /D_UNICODE `"$root\launcher\launch.cpp`" /Fe:p2r_launch.exe /link /DEBUG"
 Compile "x64" (Join-Path $build "encoder") "$common /DUNICODE /D_UNICODE `"$root\encoder\encoder.cpp`" /Fe:p2r_encoder.exe /link /DEBUG d3d11.lib mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib"
-Compile "x64" (Join-Path $build "app") "$common /DUNICODE /D_UNICODE `"$root\app\main.cpp`" /Fe:P2Render.exe /link /DEBUG /SUBSYSTEM:WINDOWS ws2_32.lib shell32.lib ole32.lib bcrypt.lib advapi32.lib user32.lib"
+Compile "x64" (Join-Path $build "app") "$common /DUNICODE /D_UNICODE `"$root\app\main.cpp`" /Fe:P2Render.exe /link /DEBUG /SUBSYSTEM:WINDOWS ws2_32.lib shell32.lib ole32.lib bcrypt.lib advapi32.lib user32.lib urlmon.lib"
 
 Copy-Item (Join-Path $build "core\p2r_core.dll"), (Join-Path $build "core\p2r_core.pdb") $dist -Force
 Copy-Item (Join-Path $build "launch\p2r_launch.exe") $dist -Force

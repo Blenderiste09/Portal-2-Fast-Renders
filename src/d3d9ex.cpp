@@ -43,6 +43,8 @@ static long g_shotFrame = -1; // -d3d9ex_shot <frame>
 
 bool Enabled() { return g_enabled; }
 IDirect3DDevice9Ex* Device() { return g_device; }
+static HWND g_window;
+HWND GameWindow() { return g_window; }
 
 void Init()
 {
@@ -430,7 +432,10 @@ static HRESULT STDMETHODCALLTYPE Hook_CreateDevice(IDirect3D9* d3d, UINT adapter
         return hr;
     }
     HookDevice(dev);
-    if (!g_device) g_device = dev;
+    if (!g_device) {
+        g_device = dev;
+        g_window = pp->hDeviceWindow ? pp->hDeviceWindow : wnd;
+    }
     *out = dev; // IDirect3DDevice9Ex derives from IDirect3DDevice9
     return hr;
 }

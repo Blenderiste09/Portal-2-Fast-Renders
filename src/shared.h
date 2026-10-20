@@ -8,7 +8,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { P2R_MAGIC = 0x52325050, P2R_VERSION = 1, P2R_SLOTS = 8 };
+enum { P2R_MAGIC = 0x52325050, P2R_VERSION = 2, P2R_SLOTS = 8 };
 
 enum P2RCodec : uint32_t { P2R_H264 = 0, P2R_HEVC = 1 };
 
@@ -29,6 +29,12 @@ struct P2RShared {
     uint64_t slot_handles[P2R_SLOTS];  // D3D9Ex shared handles (global, valid in any process)
     wchar_t out_path[520];       // final .mp4
     wchar_t wav_path[520];       // engine audio (startmovie ... wav), muxed at the end if present
+
+    // Advanced mode: frames are read back (D3D11 staging) and piped to ffmpeg as raw BGRA.
+    int32_t use_ffmpeg;
+    wchar_t ffmpeg_path[520];
+    wchar_t ff_video_args[1024]; // output options of the video pass, e.g. "-c:v libx264 -crf 18"
+    wchar_t ff_audio_args[256];  // audio options of the mux pass, e.g. "-c:a aac -b:a 320k"
 
     // Game -> encoder.
     volatile int32_t ended;            // no more frames after total_frames

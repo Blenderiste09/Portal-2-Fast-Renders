@@ -13,6 +13,9 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <tlhelp32.h>
+#include <urlmon.h>
+#include <mmdeviceapi.h>
+#include <audiopolicy.h>
 #include <bcrypt.h>
 #include <share.h>
 #include <stdio.h>
@@ -174,8 +177,15 @@ struct Settings {
     string quality = "high";     // standard | high | max
     wstring outDir;
     wstring gameDir;             // empty = found through Steam
-    bool showWindow = false;
+    bool showWindow = false;     // false = invisible rendering (game window hidden, game sound muted)
     bool closeGame = true;
+    // Advanced mode: encode with ffmpeg (the interface builds the arguments).
+    bool advanced = false;
+    wstring ffmpegPath;          // empty = auto (downloaded copy, then PATH)
+    string container = "mp4";    // output extension
+    string ffVideo = "-c:v h264_nvenc -preset p5 -tune hq -rc vbr -cq 19 -b:v 0 -pix_fmt yuv420p"; // = interface default
+    string ffAudio = "-c:a aac -b:a 320k";
+    string ffUi;                 // the interface's own state of the advanced panel (opaque JSON)
 };
 
 static wstring g_dataDir;        // %LOCALAPPDATA%\P2Render
@@ -186,8 +196,8 @@ static wstring IniPath() { return g_dataDir + L"\\settings.ini"; }
 
 static wstring IniGet(const wchar_t* key, const wstring& def)
 {
-    wchar_t buf[1024];
-    GetPrivateProfileStringW(L"p2render", key, def.c_str(), buf, 1024, IniPath().c_str());
+    wchar_t buf[8192];
+    GetPrivateProfileStringW(L"p2render", key, def.c_str(), buf, 8192, IniPath().c_str());
     return buf;
 }
 static void IniSet(const wchar_t* key, const wstring& v) { WritePrivateProfileStringW(L"p2render", key, v.c_str(), IniPath().c_str()); }
@@ -205,6 +215,12 @@ static void LoadSettings()
     s.gameDir = IniGet(L"gameDir", L"");
     s.showWindow = IniGet(L"showWindow", L"0") == L"1";
     s.closeGame = IniGet(L"closeGame", L"1") == L"1";
+    s.advanced = IniGet(L"advanced", L"0") == L"1";
+    s.ffmpegPath = IniGet(L"ffmpegPath", L"");
+    s.container = Narrow(IniGet(L"container", Widen(s.container)));
+    s.ffVideo = Narrow(IniGet(L"ffVideo", Widen(s.ffVideo)));
+    s.ffAudio = Narrow(IniGet(L"ffAudio", Widen(s.ffAudio)));
+    s.ffUi = Narrow(IniGet(L"ffUi", L""));
     if (s.width < 320 || s.height < 240) s.width = 1920, s.height = 1080;
     if (s.fps < 1 || s.fps > 1000) s.fps = 60;
     g_set = s;
@@ -222,6 +238,12 @@ static void SaveSettings()
     IniSet(L"gameDir", s.gameDir);
     IniSet(L"showWindow", s.showWindow ? L"1" : L"0");
     IniSet(L"closeGame", s.closeGame ? L"1" : L"0");
+    IniSet(L"advanced", s.advanced ? L"1" : L"0");
+    IniSet(L"ffmpegPath", s.ffmpegPath);
+    IniSet(L"container", Widen(s.container));
+    IniSet(L"ffVideo", Widen(s.ffVideo));
+    IniSet(L"ffAudio", Widen(s.ffAudio));
+    IniSet(L"ffUi", Widen(s.ffUi));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -271,6 +293,188 @@ static wstring GameDir()
     if (!g_set.gameDir.empty() && FileExists(g_set.gameDir + L"\\portal2.exe")) return g_set.gameDir;
     static wstring found = FindPortal2();
     return found;
+}
+
+// ---------------------------------------------------------------------------------------------
+// ffmpeg (advanced mode): chosen path, else the copy P2Render downloaded, else PATH.
+
+static wstring FindFileUnder(const wstring& dir, const wchar_t* name, int depth)
+{
+    if (FileExists(dir + L"\\" + name)) return dir + L"\\" + name;
+    if (depth == 0) return {};
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    wstring r;
+    do {
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != L'.')
+            r = FindFileUnder(dir + L"\\" + fd.cFileName, name, depth - 1);
+    } while (r.empty() && FindNextFileW(h, &fd));
+    FindClose(h);
+    return r;
+}
+
+static wstring FfmpegPath()
+{
+    if (!g_set.ffmpegPath.empty() && FileExists(g_set.ffmpegPath)) return g_set.ffmpegPath;
+    wstring local = FindFileUnder(g_dataDir + L"\\ffmpeg", L"ffmpeg.exe", 3);
+    if (!local.empty()) return local;
+    wchar_t p[MAX_PATH];
+    if (SearchPathW(nullptr, L"ffmpeg.exe", nullptr, MAX_PATH, p, nullptr)) return p;
+    return {};
+}
+
+struct FfmpegDownload {
+    bool running = false;
+    int percent = 0;
+    string error;
+};
+static FfmpegDownload g_ffdl;   // guarded by g_mx
+
+class DownloadProgress : public IBindStatusCallback {
+public:
+    HRESULT STDMETHODCALLTYPE OnProgress(ULONG done, ULONG total, ULONG, LPCWSTR) override
+    {
+        if (total) {
+            std::lock_guard<std::mutex> l(g_mx);
+            g_ffdl.percent = (int)((double)done * 90 / total); // the last 10 % = extraction
+        }
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** p) override
+    {
+        if (riid == IID_IUnknown || riid == IID_IBindStatusCallback) {
+            *p = this;
+            return S_OK;
+        }
+        *p = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE OnStartBinding(DWORD, IBinding*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetPriority(LONG*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE OnLowResource(DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnStopBinding(HRESULT, LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetBindInfo(DWORD*, BINDINFO*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDataAvailable(DWORD, DWORD, FORMATETC*, STGMEDIUM*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnObjectAvailable(REFIID, IUnknown*) override { return S_OK; }
+};
+
+static bool RunAndWait(const wstring& cmd, DWORD timeoutMs)
+{
+    STARTUPINFOW si = {sizeof(si)};
+    PROCESS_INFORMATION pi = {};
+    std::vector<wchar_t> cl(cmd.begin(), cmd.end());
+    cl.push_back(0);
+    if (!CreateProcessW(nullptr, cl.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return false;
+    DWORD code = 1;
+    if (WaitForSingleObject(pi.hProcess, timeoutMs) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code == 0;
+}
+
+// Downloads the latest release build of ffmpeg (BtbN, win64, GPL, shared libraries ~85 MB) into
+// %LOCALAPPDATA%\P2Render\ffmpeg and extracts it with Windows' tar.
+static void DownloadFfmpeg()
+{
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    auto fail = [](const string& e) {
+        std::lock_guard<std::mutex> l(g_mx);
+        g_ffdl.running = false;
+        g_ffdl.error = e;
+        Log("ffmpeg download: %s", e.c_str());
+    };
+    wstring dir = g_dataDir + L"\\ffmpeg";
+    wstring json = g_dataDir + L"\\ffmpeg_release.json", zip = g_dataDir + L"\\ffmpeg.zip";
+    string url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip";
+    if (SUCCEEDED(URLDownloadToFileW(nullptr, L"https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", json.c_str(), 0, nullptr))) {
+        // Prefer the newest numbered release ("ffmpeg-nX.Y-latest-win64-gpl-shared-X.Y.zip").
+        FILE* f = nullptr;
+        string body;
+        if (_wfopen_s(&f, json.c_str(), L"rb") == 0 && f) {
+            char b[65536];
+            size_t n;
+            while ((n = fread(b, 1, sizeof(b), f)) > 0) body.append(b, n);
+            fclose(f);
+        }
+        DeleteFileW(json.c_str());
+        // The newest numbered release, but 8.x first: ffmpeg 9 needs NVENC API 13.1 (NVIDIA driver
+        // 610+), 8.x works with older drivers.
+        string best, best8;
+        for (size_t p = body.find("\"browser_download_url\""); p != string::npos; p = body.find("\"browser_download_url\"", p + 1)) {
+            size_t a = body.find('"', body.find(':', p) + 1), e = body.find('"', a + 1);
+            string u = body.substr(a + 1, e - a - 1);
+            if (u.find("/ffmpeg-n") != string::npos && u.find("-win64-gpl-shared-") != string::npos && u.size() > 4 &&
+                u.compare(u.size() - 4, 4, ".zip") == 0) {
+                if (u > best) best = u;
+                if (u.find("/ffmpeg-n8.") != string::npos && u > best8) best8 = u;
+            }
+        }
+        if (!best8.empty()) url = best8;
+        else if (!best.empty()) url = best;
+    }
+    Log("ffmpeg download: %s", url.c_str());
+    DownloadProgress progress;
+    HRESULT hr = URLDownloadToFileW(nullptr, Widen(url).c_str(), zip.c_str(), 0, &progress);
+    if (FAILED(hr)) return fail("téléchargement impossible (pas de connexion ?)");
+    {
+        std::lock_guard<std::mutex> l(g_mx);
+        g_ffdl.percent = 92;
+    }
+    CreateDirectoryW(dir.c_str(), nullptr);
+    wchar_t sys[MAX_PATH];
+    GetSystemDirectoryW(sys, MAX_PATH);
+    bool ok = RunAndWait(L"\"" + wstring(sys) + L"\\tar.exe\" -xf \"" + zip + L"\" -C \"" + dir + L"\"", 300000);
+    DeleteFileW(zip.c_str());
+    if (!ok || FindFileUnder(dir, L"ffmpeg.exe", 3).empty()) return fail("extraction de l'archive impossible");
+    std::lock_guard<std::mutex> l(g_mx);
+    g_ffdl.running = false;
+    g_ffdl.percent = 100;
+    g_ffdl.error.clear();
+    Log("ffmpeg ready: %s", Narrow(FfmpegPath()).c_str());
+}
+
+// Mutes the game in the Windows mixer (invisible rendering): only its output, the engine still
+// mixes the sound that goes into the video.
+static void MuteProcessAudio(DWORD pid)
+{
+    IMMDeviceEnumerator* en = nullptr;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en)))) return;
+    IMMDevice* dev = nullptr;
+    if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &dev))) {
+        IAudioSessionManager2* mgr = nullptr;
+        if (SUCCEEDED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, (void**)&mgr))) {
+            IAudioSessionEnumerator* list = nullptr;
+            if (SUCCEEDED(mgr->GetSessionEnumerator(&list))) {
+                int n = 0;
+                list->GetCount(&n);
+                for (int i = 0; i < n; ++i) {
+                    IAudioSessionControl* c = nullptr;
+                    IAudioSessionControl2* c2 = nullptr;
+                    DWORD sp = 0;
+                    if (SUCCEEDED(list->GetSession(i, &c)) && SUCCEEDED(c->QueryInterface(IID_PPV_ARGS(&c2))) &&
+                        SUCCEEDED(c2->GetProcessId(&sp)) && sp == pid) {
+                        ISimpleAudioVolume* vol = nullptr;
+                        if (SUCCEEDED(c->QueryInterface(IID_PPV_ARGS(&vol)))) {
+                            BOOL muted = FALSE;
+                            vol->GetMute(&muted);
+                            if (!muted) vol->SetMute(TRUE, nullptr);
+                            vol->Release();
+                        }
+                    }
+                    if (c2) c2->Release();
+                    if (c) c->Release();
+                }
+                list->Release();
+            }
+            mgr->Release();
+        }
+        dev->Release();
+    }
+    en->Release();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -366,6 +570,7 @@ static HANDLE g_gameProc;
 static HANDLE g_ctrlMap;
 static P2RControl* g_ctrl;
 static int g_sessionW, g_sessionH;
+static bool g_sessionHidden;
 
 static bool GameAlive() { return g_gameProc && WaitForSingleObject(g_gameProc, 0) == WAIT_TIMEOUT; }
 
@@ -398,7 +603,7 @@ static void SetStatus(const string& s)
 }
 
 // Runs p2r_launch.exe and waits for the core to be ready. Called from the worker thread.
-static bool StartGame(int w, int h, string& err)
+static bool StartGame(int w, int h, bool hidden, string& err)
 {
     wstring game = GameDir();
     if (game.empty()) {
@@ -413,6 +618,8 @@ static bool StartGame(int w, int h, string& err)
     wstring cmd = L"\"" + dir + L"p2r_launch.exe\" \"" + game + L"\" \"" + dir + L"p2r_core.dll\" -game portal2 -novid -sw -noborder -w " +
                   std::to_wstring(w) + L" -h " + std::to_wstring(h);
     Log("launch: %s", Narrow(cmd).c_str());
+    // Inherited by p2r_launch.exe and the game: start hidden, keep the window hidden (core).
+    SetEnvironmentVariableW(L"P2R_HIDDEN", hidden ? L"1" : L"0");
     SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
     HANDLE rd, wr;
     CreatePipe(&rd, &wr, &sa, 0);
@@ -451,6 +658,7 @@ static bool StartGame(int w, int h, string& err)
     g_gameProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
     g_sessionW = w;
     g_sessionH = h;
+    g_sessionHidden = hidden;
 
     // Wait for the control block.
     wchar_t name[64];
@@ -465,6 +673,7 @@ static bool StartGame(int w, int h, string& err)
             err = "Portal 2 s'est fermé pendant le démarrage";
             return false;
         }
+        if (hidden) MuteProcessAudio(pid);
         if (!g_ctrl) {
             g_ctrlMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name);
             if (g_ctrlMap) g_ctrl = (P2RControl*)MapViewOfFile(g_ctrlMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(P2RControl));
@@ -505,10 +714,10 @@ static int Bitrate(const Settings& s)
     return std::max(4000, (int)kbps);
 }
 
-static wstring UniqueOutput(const wstring& dir, const wstring& base)
+static wstring UniqueOutput(const wstring& dir, const wstring& base, const wstring& ext)
 {
-    wstring p = dir + L"\\" + base + L".mp4";
-    for (int i = 2; FileExists(p); ++i) p = dir + L"\\" + base + L"_" + std::to_wstring(i) + L".mp4";
+    wstring p = dir + L"\\" + base + L"." + ext;
+    for (int i = 2; FileExists(p); ++i) p = dir + L"\\" + base + L"_" + std::to_wstring(i) + L"." + ext;
     return p;
 }
 
@@ -537,7 +746,20 @@ static bool RenderItem(int id)
         }
     };
 
-    if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height)) QuitGame(); // new resolution
+    bool hidden = !s.showWindow;
+    if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height || g_sessionHidden != hidden))
+        QuitGame(); // new resolution or display mode
+    wstring ffmpeg;
+    if (s.advanced) {
+        {
+            std::lock_guard<std::mutex> l(g_mx);
+            ffmpeg = FfmpegPath();
+        }
+        if (ffmpeg.empty()) {
+            finish(ItemState::Failed, "mode avancé : ffmpeg introuvable (télécharge-le ou choisis ffmpeg.exe dans les réglages)");
+            return true;
+        }
+    }
     if (!GameAlive()) {
         CloseSession();
         {
@@ -546,7 +768,7 @@ static bool RenderItem(int id)
             g_status = "Démarrage de Portal 2…";
         }
         string err;
-        if (!StartGame(s.width, s.height, err)) {
+        if (!StartGame(s.width, s.height, hidden, err)) {
             if (GameAlive()) TerminateProcess(g_gameProc, 1);
             CloseSession();
             finish(g_cancel ? ItemState::Cancelled : ItemState::Failed, err);
@@ -571,7 +793,7 @@ static bool RenderItem(int id)
     }
     CreateDirectoryW(s.outDir.c_str(), nullptr);
     SHCreateDirectoryExW(nullptr, s.outDir.c_str(), nullptr);
-    wstring out = UniqueOutput(s.outDir, StripExt(FileName(src)));
+    wstring out = UniqueOutput(s.outDir, StripExt(FileName(src)), s.advanced ? Widen(s.container) : L"mp4");
 
     P2RJob job = {};
     sprintf_s(job.demo, "p2render_tmp/demo%d", id);
@@ -580,6 +802,12 @@ static bool RenderItem(int id)
     job.codec = s.codec == "hevc" ? P2R_HEVC : P2R_H264;
     job.bitrate_kbps = Bitrate(s);
     job.show_window = s.showWindow;
+    if (s.advanced) {
+        job.use_ffmpeg = 1;
+        wcscpy_s(job.ffmpeg_path, ffmpeg.c_str());
+        wcsncpy_s(job.ff_video_args, Widen(s.ffVideo).c_str(), _TRUNCATE);
+        wcsncpy_s(job.ff_audio_args, Widen(s.ffAudio).c_str(), _TRUNCATE);
+    }
     g_ctrl->job = job;
     g_ctrl->cmd = CMD_RENDER;
     MemoryBarrier();
@@ -587,8 +815,13 @@ static bool RenderItem(int id)
     Log("job %d (seq %d): %s -> %s", id, seq, Narrow(src).c_str(), Narrow(out).c_str());
 
     bool cancelSent = false, sessionOk = true;
+    DWORD lastMute = 0;
     for (;;) {
         Sleep(100);
+        if (hidden && GetTickCount() - lastMute > 1000) {
+            MuteProcessAudio(g_gamePid);
+            lastMute = GetTickCount();
+        }
         if (!GameAlive()) {
             finish(ItemState::Failed, "Portal 2 s'est fermé pendant le rendu");
             sessionOk = false;
@@ -631,6 +864,7 @@ static bool RenderItem(int id)
 
 static void Worker()
 {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED); // audio session muting
     for (;;) {
         int next = 0;
         {
@@ -678,7 +912,7 @@ static void Worker()
 // ---------------------------------------------------------------------------------------------
 // Native dialogs (run on their own STA thread)
 
-static std::vector<wstring> PickFiles(bool folder, const wstring& title)
+static std::vector<wstring> PickFiles(bool folder, const wstring& title, bool exe = false)
 {
     std::vector<wstring> result;
     std::thread t([&] {
@@ -689,6 +923,10 @@ static std::vector<wstring> PickFiles(bool folder, const wstring& title)
             dlg->GetOptions(&opt);
             if (folder) {
                 opt |= FOS_PICKFOLDERS;
+            } else if (exe) {
+                opt |= FOS_FILEMUSTEXIST;
+                COMDLG_FILTERSPEC spec[] = {{L"ffmpeg.exe", L"ffmpeg.exe"}, {L"Programmes", L"*.exe"}};
+                dlg->SetFileTypes(2, spec);
             } else {
                 opt |= FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST;
                 COMDLG_FILTERSPEC spec[] = {{L"Démos Portal 2", L"*.dem"}, {L"Tous les fichiers", L"*.*"}};
@@ -770,7 +1008,12 @@ static string StateJson()
     j += "\"settings\":{\"width\":" + std::to_string(s.width) + ",\"height\":" + std::to_string(s.height) +
          ",\"fps\":" + std::to_string(s.fps) + ",\"codec\":" + Q(s.codec) + ",\"quality\":" + Q(s.quality) +
          ",\"outDir\":" + Q(s.outDir) + ",\"gameDir\":" + Q(s.gameDir) + ",\"showWindow\":" + (s.showWindow ? "true" : "false") +
-         ",\"closeGame\":" + (s.closeGame ? "true" : "false") + ",\"bitrate\":" + std::to_string(Bitrate(s)) + "},";
+         ",\"closeGame\":" + (s.closeGame ? "true" : "false") + ",\"bitrate\":" + std::to_string(Bitrate(s)) +
+         ",\"advanced\":" + (s.advanced ? "true" : "false") + ",\"ffmpegPath\":" + Q(s.ffmpegPath) + ",\"container\":" + Q(s.container) +
+         ",\"ffVideo\":" + Q(s.ffVideo) + ",\"ffAudio\":" + Q(s.ffAudio) + ",\"ffUi\":" + Q(s.ffUi) + "},";
+    wstring ff = FfmpegPath();
+    j += "\"ffmpeg\":{\"path\":" + Q(ff) + ",\"found\":" + (ff.empty() ? "false" : "true") + ",\"downloading\":" +
+         (g_ffdl.running ? "true" : "false") + ",\"percent\":" + std::to_string(g_ffdl.percent) + ",\"error\":" + Q(g_ffdl.error) + "},";
     j += "\"running\":" + string(g_running ? "true" : "false") + ",\"status\":" + Q(g_status) + ",\"items\":[";
     bool first = true;
     for (const Item& i : g_items) {
@@ -838,6 +1081,12 @@ static string Handle(const Request& r, int& code, const char*& type)
         if (JsonRaw(b, "gameDir", v)) s.gameDir = Widen(v);
         s.showWindow = JsonBool(b, "showWindow", s.showWindow);
         s.closeGame = JsonBool(b, "closeGame", s.closeGame);
+        s.advanced = JsonBool(b, "advanced", s.advanced);
+        string c = JsonStr(b, "container", s.container);
+        if (c == "mp4" || c == "mkv" || c == "mov") s.container = c;
+        if (JsonRaw(b, "ffVideo", v)) s.ffVideo = v;
+        if (JsonRaw(b, "ffAudio", v)) s.ffAudio = v;
+        if (JsonRaw(b, "ffUi", v)) s.ffUi = v;
         SaveSettings();
         return "{\"ok\":true}";
     }
@@ -960,6 +1209,25 @@ static string Handle(const Request& r, int& code, const char*& type)
             } else {
                 return "{\"error\":\"portal2.exe n'est pas dans ce dossier\"}";
             }
+        }
+        return "{\"ok\":true}";
+    }
+    if (r.path == "/api/ffmpeg-download" && r.method == "POST") {
+        std::lock_guard<std::mutex> l(g_mx);
+        if (!g_ffdl.running) {
+            g_ffdl = FfmpegDownload();
+            g_ffdl.running = true;
+            std::thread(DownloadFfmpeg).detach();
+        }
+        return "{\"ok\":true}";
+    }
+    if (r.path == "/api/browse-ffmpeg" && r.method == "POST") {
+        auto f = PickFiles(false, L"Choisir ffmpeg.exe", true);
+        if (!f.empty()) {
+            std::lock_guard<std::mutex> l(g_mx);
+            if (_wcsicmp(FileName(f[0]).c_str(), L"ffmpeg.exe") != 0) return "{\"error\":\"choisis le fichier ffmpeg.exe\"}";
+            g_set.ffmpegPath = f[0];
+            SaveSettings();
         }
         return "{\"ok\":true}";
     }

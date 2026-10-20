@@ -24,7 +24,7 @@ struct Session {
     bool cancelled = false;
 
     // Saved cvars, restored at the end.
-    char queueMode[32], hostFramerate[32], fpsMax[32];
+    char queueMode[32], hostFramerate[32], fpsMax[32], focusSleep[32], muteLoseFocus[32];
 
     // GPU ring (created on the first movie frame, on the main thread).
     bool gpuReady = false;
@@ -111,7 +111,8 @@ static void CloseIpc(Session& s)
 static void RestoreCvars(Session& s)
 {
     char cmd[256];
-    sprintf_s(cmd, "host_framerate %s; mat_queue_mode %s; fps_max %s", s.hostFramerate, s.queueMode, s.fpsMax);
+    sprintf_s(cmd, "host_framerate %s; mat_queue_mode %s; fps_max %s; engine_no_focus_sleep %s; snd_mute_losefocus %s",
+              s.hostFramerate, s.queueMode, s.fpsMax, s.focusSleep, s.muteLoseFocus);
     engine::Run(cmd);
 }
 
@@ -191,6 +192,10 @@ static bool StartEncoder(Session& s)
     m->num_slots = P2R_SLOTS;
     wcscpy_s(m->out_path, s.job.out_path);
     wcscpy_s(m->wav_path, s.wavPath);
+    m->use_ffmpeg = s.job.use_ffmpeg;
+    wcscpy_s(m->ffmpeg_path, s.job.ffmpeg_path);
+    wcscpy_s(m->ff_video_args, s.job.ff_video_args);
+    wcscpy_s(m->ff_audio_args, s.job.ff_audio_args);
 
     wchar_t exe[MAX_PATH];
     DWORD n = GetModuleFileNameW(g_self, exe, MAX_PATH);
@@ -356,8 +361,12 @@ static void StartJob(const P2RJob& job, int jobId)
     Copy(s.queueMode, sizeof(s.queueMode), engine::GetCvarString("mat_queue_mode"));
     Copy(s.hostFramerate, sizeof(s.hostFramerate), engine::GetCvarString("host_framerate"));
     Copy(s.fpsMax, sizeof(s.fpsMax), engine::GetCvarString("fps_max"));
+    Copy(s.focusSleep, sizeof(s.focusSleep), engine::GetCvarString("engine_no_focus_sleep"));
+    Copy(s.muteLoseFocus, sizeof(s.muteLoseFocus), engine::GetCvarString("snd_mute_losefocus"));
+    // The game window is usually not focused (or hidden): no sleeping and no muted mixer then
+    // (the engine WAV is written by the mixer).
     char cmd[256];
-    sprintf_s(cmd, "mat_queue_mode 0; fps_max 0; host_framerate %d", s.job.fps);
+    sprintf_s(cmd, "mat_queue_mode 0; fps_max 0; host_framerate %d; engine_no_focus_sleep 0; snd_mute_losefocus 0", s.job.fps);
     engine::Run(cmd);
     s.state = State::Arming;
     LOG("job %d: %s -> %ls (%d fps, codec %d, %d kbit/s, window %d)", jobId, job.demo, job.out_path, job.fps,
@@ -487,6 +496,17 @@ void Init(HMODULE self) { g_self = self; }
 
 void OnPresentHooked()
 {
+    // Hidden mode (P2Render "invisible" rendering, env P2R_HIDDEN=1 from the launcher): the game
+    // window is kept hidden; Direct3D renders to it all the same.
+    static int hidden = -1;
+    if (hidden < 0) {
+        char v[8] = {};
+        hidden = GetEnvironmentVariableA("P2R_HIDDEN", v, sizeof(v)) && v[0] == '1';
+    }
+    if (hidden) {
+        HWND w = d3d9ex::GameWindow();
+        if (w && IsWindowVisible(w)) ShowWindow(w, SW_HIDE);
+    }
     static bool done;
     if (done) return;
     engine::SetInitCallback(OnEngineReady);
