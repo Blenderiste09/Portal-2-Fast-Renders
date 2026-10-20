@@ -1,43 +1,52 @@
-# Portal 2 D3D9Ex : rendu rapide de démos
+# P2Render : rendu ultra-rapide de démos Portal 2
 
-Rend une démo Portal 2 en MP4 (H.264 ou HEVC + son AAC) sans jamais passer les images par le CPU :
-le jeu tourne en Direct3D 9Ex, chaque image est copiée sur le GPU dans une texture partagée, et un
-encodeur x64 séparé l'encode avec l'encodeur matériel de la carte (NVENC / AMF / QuickSync via Media
-Foundation).
+P2Render est une application indépendante qui transforme des démos Portal 2 en vidéos MP4 (H.264 ou
+HEVC, avec le son) beaucoup plus vite que `startmovie`. Les images ne passent jamais par le
+processeur : le jeu tourne en Direct3D 9Ex, chaque image est copiée sur la carte graphique dans une
+texture partagée, puis encodée par l'encodeur matériel de la carte (NVENC / AMF / QuickSync).
 
-Mesures (Ryzen 7 5700X, carte NVIDIA, démo de 12,2 s à 60 fps) :
-
-| Méthode | Vitesse |
-|---|---|
-| `startmovie x raw` du jeu (TGA + WAV, à encoder ensuite) | ~126 images/s |
-| `p2r_start`, 720p, fenêtre mise à jour | 377 images/s |
-| `p2r_start`, 720p, `window=0` | 550 images/s (9x le temps réel) |
-| `p2r_start`, 1080p, `window=0` | 537 images/s |
-
-## Installation
-
-1. `.\build.ps1 -Deploy` (Visual Studio 2026 requis) copie dans `<Portal 2>\bin` :
-   `d3d9.dll` (le proxy qui passe le jeu en D3D9Ex) et `p2r_encoder.exe`.
-2. Lancer Portal 2 normalement. Pour revenir au D3D9 d'origine : option de lancement `-nod3d9ex`
-   ou `.\build.ps1 -Undeploy`.
+Rien n'est installé dans le dossier du jeu et il n'y a aucune commande à taper dans la console.
 
 ## Utilisation
 
-Dans la console :
+1. Lancer `P2Render.exe`. Steam doit être ouvert, et Portal 2 doit être fermé.
+2. Ajouter des démos : bouton **Ajouter des démos**, ou glisser des fichiers `.dem` dans la liste.
+3. Choisir la résolution, les images par seconde, le format, la qualité et le dossier des vidéos.
+4. Cliquer sur **Lancer le rendu**.
 
+P2Render démarre Portal 2, rend les démos l'une après l'autre (progression, vitesse et temps
+restant affichés), puis ferme le jeu si l'option est cochée. Une fois une démo terminée, ses
+boutons permettent de lire la vidéo ou de l'afficher dans son dossier.
+
+## Vitesse
+
+Mesures sur un Ryzen 7 5700X avec une carte NVIDIA, sur une démo de 12,2 s à 60 images/s :
+
+| Méthode | Vitesse |
+|---|---|
+| `startmovie` du jeu (images TGA, à encoder ensuite) | ~126 images/s |
+| P2Render en 720p | ~570 images/s (9x le temps réel) |
+| P2Render en 1080p | ~540 images/s |
+
+En comptant le lancement de Portal 2, 2 démos sont rendues en 12 s environ.
+
+## Compiler
+
+Il faut Visual Studio 2026 avec les outils C++ (x86 et x64).
+
+```powershell
+.\build.ps1          # produit dist\ (P2Render.exe et ses fichiers)
+.\build.ps1 -Run     # compile puis lance P2Render
 ```
-p2r_start <nom> demo=<démo> [fps=60] [codec=h264|hevc] [bitrate=<kbit/s>] [window=1|0]
-```
 
-- lance la démo, démarre l'enregistrement quand elle est en jeu, s'arrête tout seul à la fin ;
-- sans `demo=`, enregistre ce qui se passe jusqu'à `p2r_stop` ;
-- `window=0` ne rafraîchit plus la fenêtre pendant le rendu (plus rapide) ;
-- le débit par défaut dépend de la résolution (1080p60 : ~41 Mbit/s).
+Le dossier `dist\` se copie tel quel où l'on veut.
 
-La vidéo est écrite dans `<Portal 2>\p2r_movies\<nom>.mp4`. La console affiche la vitesse du
-rendu puis `video written`.
+## Journaux en cas de problème
 
-Pour automatiser : `-p2r_exec <cfg>` exécute un cfg une fois les commandes disponibles, et
-`p2r_after <images> <commande>` exécute une commande plus tard (Portal 2 n'a pas de `wait`).
+Ils sont dans le dossier de P2Render :
+- `p2render.log` (application) ;
+- `p2r_core.log` (côté jeu) ;
+- `p2r_encoder.log` (encodeur).
 
-Journaux : `<Portal 2>\d3d9ex.log` (jeu) et `<Portal 2>\bin\p2r_encoder.log` (encodeur).
+Les démos enregistrées avant la mise à jour 2026 du jeu ne se lisent plus (erreur `DataTable` du jeu) :
+P2Render les signale comme incompatibles.

@@ -51,9 +51,7 @@ template <class T> static T VFunc(void* obj, int i) { return (T)((*(void***)obj)
 
 static void* g_cvar;
 static void* g_engclient;
-static void* g_cmdVtable;
-static ConCommand g_cmds[16];
-static int g_numCmds;
+static void* g_cmdVtable;   // ICvar layout check passed (engine reachable)
 
 static void** g_videomode;     // engine global `videomode` (IVideoMode*)
 static void* o_WriteMovieFrame;
@@ -174,20 +172,6 @@ static bool InitConsole()
     }
     g_cmdVtable = echo->vtable;
     return true;
-}
-
-void AddCommand(const char* name, const char* help, CommandCallback cb)
-{
-    if (!g_cmdVtable || g_numCmds >= (int)(sizeof(g_cmds) / sizeof(g_cmds[0]))) return;
-    ConCommand* c = &g_cmds[g_numCmds++];
-    memset(c, 0, sizeof(*c));
-    c->vtable = g_cmdVtable;
-    c->m_pszName = name;
-    c->m_pszHelpString = help;
-    c->m_nFlags = FCVAR_DONTRECORD;
-    c->m_fnCommandCallback = cb;
-    c->m_bits = 0x02;
-    VFunc<void(__thiscall*)(void*, ConCommandBase*)>(g_cvar, ICVAR_RegisterConCommand)(g_cvar, c);
 }
 
 static void VMsg(MsgFn fn, const char* prefix, const char* fmt, va_list ap)

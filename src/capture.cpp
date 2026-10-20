@@ -45,6 +45,7 @@ struct Session {
     DWORD armTick = 0;
     int readyFrames = 0;
     int notPlayingFrames = 0;
+    bool sawDemo = false;
     DWORD startTick = 0;
     wchar_t wavPath[MAX_PATH];
 };
@@ -412,13 +413,18 @@ static void OnFrame()
             s.armTick = GetTickCount();
         }
         if (s.armFrames >= 3) {
-            if (engine::IsPlayingDemo() && engine::IsInGame() && !engine::IsLoading()) {
+            bool playing = engine::IsPlayingDemo();
+            if (playing) s.sawDemo = true;
+            else if (s.sawDemo) ++s.notPlayingFrames;
+            if (playing && engine::IsInGame() && !engine::IsLoading()) {
                 if (++s.readyFrames >= 2) {
                     sprintf_s(cmd, "startmovie \"p2r_tmp_%d\" wav", s.jobId);
                     engine::Run(cmd);
+                    s.notPlayingFrames = 0;
                     s.state = State::Recording;
                 }
-            } else if (GetTickCount() - s.armTick > 120000) {
+            } else if (s.notPlayingFrames > 120 || GetTickCount() - s.armTick > 120000) {
+                // Demos recorded before a game update stop with "DataTable_ParseClientTablesFromBuffer".
                 Fail(s, "la démo n'a pas démarré (démo incompatible avec cette version du jeu ?)");
             }
         }

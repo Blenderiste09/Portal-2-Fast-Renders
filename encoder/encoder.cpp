@@ -16,6 +16,7 @@
 #include <mfreadwrite.h>
 #include <codecapi.h>
 #include <stdarg.h>
+#include <share.h>
 #include <stdio.h>
 #include <wchar.h>
 
@@ -364,7 +365,7 @@ int wmain(int argc, wchar_t** argv)
     DWORD n = GetModuleFileNameW(nullptr, logPath, MAX_PATH);
     while (n > 0 && logPath[n - 1] != L'\\') --n;
     wcscpy_s(logPath + n, MAX_PATH - n, L"p2r_encoder.log");
-    _wfopen_s(&g_log, logPath, L"w");
+    g_log = _wfsopen(logPath, L"w", _SH_DENYNO);
     if (argc < 2) {
         Log("usage: p2r_encoder <id> (started by the game)");
         return 1;

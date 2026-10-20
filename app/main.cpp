@@ -14,6 +14,8 @@
 #include <shobjidl.h>
 #include <tlhelp32.h>
 #include <bcrypt.h>
+#include <share.h>
+#include <stdio.h>
 
 #include <algorithm>
 #include <atomic>
@@ -1080,7 +1082,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     g_dataDir = KnownFolder(FOLDERID_LocalAppData) + L"\\P2Render";
     CreateDirectoryW(g_dataDir.c_str(), nullptr);
-    _wfopen_s(&g_log, (ExeDir() + L"p2render.log").c_str(), L"w");
+    g_log = _wfsopen((ExeDir() + L"p2render.log").c_str(), L"w", _SH_DENYNO);
     g_uiDir = ExeDir() + L"ui";
     LoadSettings();
     g_token = RandomToken();

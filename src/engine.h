@@ -1,5 +1,5 @@
 // The few engine pieces the renderer needs (Portal 2 Windows build, see re/notes.md):
-// console commands (ICvar), IVEngineClient, the engine's movie recorder (startmovie), and a
+// console variables (ICvar), IVEngineClient, the engine's movie recorder (startmovie), and a
 // per-frame callback on the main thread (IBaseClientDLL::FrameStageNotify).
 #pragma once
 #include <stdint.h>
@@ -26,7 +26,6 @@ bool TryHookFrame();
 // Main-thread services (valid after the first frame).
 void Msg(const char* fmt, ...);              // console (tier0 ConMsg) + log
 void Warn(const char* fmt, ...);
-void AddCommand(const char* name, const char* help, CommandCallback cb);
 void Run(const char* cmd);                   // ClientCmd_Unrestricted (runs later in the frame)
 const char* GetCvarString(const char* name); // null if unknown
 bool IsPlayingDemo();
@@ -43,7 +42,7 @@ bool MovieHookReady();
 // Main-thread per-frame callback (FRAME_START).
 typedef void (*FrameCallback)();
 void SetFrameCallback(FrameCallback cb);
-// Called once on the main thread when the console is available (register commands there).
+// Called once on the main thread when the engine interfaces are available.
 void SetInitCallback(FrameCallback cb);
 
 } // namespace engine

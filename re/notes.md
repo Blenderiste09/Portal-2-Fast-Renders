@@ -77,3 +77,16 @@ first. A `d3d9.dll` next to `portal2.exe` is NOT loaded (verified: the system on
 - `wait` does not exist in Portal 2 ("Unknown command"); `+exec` on the command line runs before the
   client frame hook, so our commands are not yet registered then (hence `-p2r_exec`, `p2r_after`).
 - Demos recorded before the 2026 game update fail with `DataTable_ParseClientTablesFromBuffer`.
+
+## Injection (P2Render, no file in the game folder)
+
+- p2r_launch.exe creates portal2.exe suspended, patches its entry with `jmp $`, loads p2r_core.dll
+  with a remote LoadLibraryW once the main thread spins there, restores the entry (ChocolateLoading's
+  chocoload technique).
+- LdrRegisterDllNotification "LOADED" for shaderapidx9.dll arrives **before** its imports are bound:
+  the core redirects the DLL's entry point (5-byte jmp, restored on the first call) and patches the
+  IAT entry `d3d9.dll!Direct3DCreate9` from there.
+- Inline-hooking d3d9!Direct3DCreate9 instead puts GameOverlayRenderer.dll in the call chain (the
+  Steam overlay hooks Direct3DCreate9 and IDirect3D9::CreateDevice; callers seen: overlay +0x7c5bb /
+  +0x7bfd8): the device became D3D9Ex but the process died after its first Present (AV in ntdll
+  +0xb357e, not even seen by a vectored handler). With the IAT redirect the overlay is not involved.
