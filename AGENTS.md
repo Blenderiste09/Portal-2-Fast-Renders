@@ -87,7 +87,14 @@ frames in ~1.3 s, the MP4 in `<Videos>\P2Render` (the owner's Videos folder is `
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
 `a2_228.dem`) must fail fast with "la démo n'a pas démarré". Check a video with `tools/preview`.
 
-API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open`.
+API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise`.
+`POST /api/visualise {path,dir,out,ffArgs,ffmpegPath,width,height,fps}` renders one demo **hidden** and
+has ffmpeg write a live stream (HLS playlist or fragmented MP4) into `dir`: the demo can be watched
+while it renders. Used by the POC below.
+
+POC « visualisation en direct » (hors dépôt) : `D:\OpenCode\P2Render-POC` — page + petit serveur node
+qui pilote P2Render.exe (`--no-window`) et sert le flux qui grossit (HLS via hls.js ou MP4 fragmenté
+dans `<video>`). Voir son `README.md` : `node server.js`, puis http://127.0.0.1:8787.
 
 ## How it works
 
