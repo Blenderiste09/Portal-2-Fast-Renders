@@ -1,0 +1,4 @@
+build/
+re/out/
+re/bin/
+*.log
