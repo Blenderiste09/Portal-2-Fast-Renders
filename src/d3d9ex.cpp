@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "capture.h"
 #include "log.h"
 
 namespace d3d9ex {
@@ -384,6 +385,8 @@ static HRESULT STDMETHODCALLTYPE Hook_Present(IDirect3DDevice9* dev, const RECT*
         strcpy_s(path + n, MAX_PATH - n, "d3d9ex_shot.bmp");
         SaveBackBuffer(dev, path);
     }
+    capture::OnPresentHooked();
+    if (capture::SkipPresent()) return S_OK;
     return o_Present(dev, src, dst, wnd, dirty);
 }
 

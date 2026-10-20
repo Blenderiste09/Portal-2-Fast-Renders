@@ -6,6 +6,7 @@
 #include <d3d9.h>
 #include <intrin.h>
 
+#include "capture.h"
 #include "d3d9ex.h"
 #include "log.h"
 
@@ -153,6 +154,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
         }
         ResolveForwards();
         d3d9ex::Init();
+        capture::Init(inst);
     }
     return TRUE;
 }
