@@ -140,6 +140,17 @@ static wstring KnownFolder(REFKNOWNFOLDERID id)
 
 static bool FileExists(const wstring& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
 
+// Portable install: can we write next to the application?
+static bool DirWritable(const wstring& dir)
+{
+    wstring probe = dir + L"\\.write-test";
+    HANDLE h = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(h);
+    DeleteFileW(probe.c_str());
+    return true;
+}
+
 static wstring FileName(const wstring& p)
 {
     size_t s = p.find_last_of(L"\\/");
@@ -202,10 +213,13 @@ static wstring IniGet(const wchar_t* key, const wstring& def)
 }
 static void IniSet(const wchar_t* key, const wstring& v) { WritePrivateProfileStringW(L"p2render", key, v.c_str(), IniPath().c_str()); }
 
+static bool g_portable;   // data (and the videos) live next to the application
+
 static void LoadSettings()
 {
     Settings s;
-    s.outDir = KnownFolder(FOLDERID_Videos) + L"\\P2Render";
+    // Portable: the videos go to videos_out, next to the application.
+    s.outDir = (g_portable ? ExeDir() : g_dataDir + L"\\") + L"videos_out";
     s.width = _wtoi(IniGet(L"width", L"1920").c_str());
     s.height = _wtoi(IniGet(L"height", L"1080").c_str());
     s.fps = _wtoi(IniGet(L"fps", L"60").c_str());
@@ -1425,8 +1439,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
         return 0;
     }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    g_dataDir = KnownFolder(FOLDERID_LocalAppData) + L"\\P2Render";
+    // Portable: settings, demos, ffmpeg and the Edge profile live next to the application
+    // (P2Render\data), so the folder can be moved or copied anywhere. A read-only folder
+    // (Program Files) falls back to %LOCALAPPDATA%\P2Render.
+    g_dataDir = ExeDir() + L"data";
     CreateDirectoryW(g_dataDir.c_str(), nullptr);
+    g_portable = DirWritable(g_dataDir);
+    if (!g_portable) {
+        g_dataDir = KnownFolder(FOLDERID_LocalAppData) + L"\\P2Render";
+        CreateDirectoryW(g_dataDir.c_str(), nullptr);
+    }
     g_log = _wfsopen((ExeDir() + L"p2render.log").c_str(), L"w", _SH_DENYNO);
     g_uiDir = ExeDir() + L"ui";
     LoadSettings();

@@ -32,7 +32,7 @@ then `re/notes.md`.
 
 ```
 app/                  P2Render.exe (x64): local HTTP server + Edge --app window, queue, settings
-  main.cpp            settings (%LOCALAPPDATA%\P2Render\settings.ini), Steam library lookup, demo
+  main.cpp            settings (<exe>\data\settings.ini, portable), Steam library lookup, demo
                       header parsing, job worker, native file dialogs, JSON API
   ui/index.html       the whole interface (vanilla HTML/CSS/JS, polls /api/state every 500 ms)
 launcher/launch.cpp   p2r_launch.exe (x86): starts portal2.exe suspended, parks it on its entry point,
@@ -53,7 +53,7 @@ encoder/encoder.cpp   p2r_encoder.exe (x64): D3D11 OpenSharedResource + Media Fo
                       (hardware MFT), then mux of the engine WAV (AAC) into the final MP4
 tools/preview/        node server + page to check a rendered .mp4 in the browser pane
 re/                   notes.md (ALL RE findings), ghidra.ps1 + P2Query.java, projects/*.progname
-build.ps1             builds everything into dist/ (-Run, -CleanGame)
+build.ps1             builds everything into dist/ (-Run, -CleanGame) + dist\portable\ (the folder to give)
 ```
 
 ## Build and test
@@ -64,6 +64,7 @@ available. Edge (WebView) is on every Windows 10/11.
 ```powershell
 cd "D:\OpenCode\Portal 2 D3D9Ex"
 .\build.ps1             # dist\: P2Render.exe, p2r_launch.exe, p2r_core.dll(+pdb), p2r_encoder.exe, ui\
+                        #       + dist\portable\: the whole application in one folder (data included)
 .\build.ps1 -Run        # and start it
 .\build.ps1 -CleanGame  # remove the old d3d9.dll proxy (first versions) from <Portal 2>\bin
 ```
@@ -83,7 +84,7 @@ Invoke-RestMethod "$b/api/state" -Headers $h   # poll until running == false
 
 Open the same URL in the browser pane to see / click the interface (resize to 1240x820).
 `portal2\p2r_ref.dem` is a 12 s test demo recorded with the current build. Expect it `done` with 730
-frames in ~1.3 s, the MP4 in `<Videos>\P2Render` (the owner's Videos folder is `Z:\Users\flode\Videos`),
+frames in ~1.3 s, the MP4 in `dist\videos_out` (portable default; the setting can point anywhere),
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
 `a2_228.dem`) must fail fast with "la démo n'a pas démarré". Check a video with `tools/preview`.
 

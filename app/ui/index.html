@@ -79,6 +79,9 @@ main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap:
 .item.failed .thumb { color: var(--red); }
 .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta b { color: var(--text); font-weight: 600; }
+.meta .link { color: var(--blue); text-decoration: none; cursor: pointer; }
+.meta .link:hover { text-decoration: underline; }
 .meta.err { color: #ff9a9a; white-space: normal; }
 .bar { height: 6px; border-radius: 99px; background: #0f141b; margin-top: 8px; overflow: hidden; }
 .bar > div { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--blue), #8cc8ff); transition: width .3s; }
@@ -261,6 +264,14 @@ async function api(path, body, raw) {
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 5000); }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function dur(sec) { if (!(sec > 0)) return '—'; sec = Math.round(sec); const m = Math.floor(sec / 60), s = sec % 60; return m ? `${m} min ${String(s).padStart(2, '0')} s` : `${s} s`; }
+// Render time: hh:mm:ss, dropping the units that carry nothing (1:04:05, 4:05, 1,4 s).
+function hms(sec) {
+  if (!(sec >= 0)) return '—';
+  if (sec < 60) return (sec < 9.95 ? sec.toFixed(1) : sec.toFixed(0)).replace('.', ',') + ' s';
+  const t = Math.round(sec), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+function baseName(p) { return String(p || '').split(/[\\/]/).pop(); }
 
 const ICON = {
   film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>',
@@ -283,7 +294,7 @@ function itemHtml(it) {
     const fps = it.renderMs > 0 ? it.frames * 1000 / it.renderMs : 0;
     if (it.state === 'recording') {
       const left = fps > 0 && it.expected ? Math.max(0, (it.expected - it.frames) / fps) : 0;
-      meta = `${it.frames} / ${it.expected || '?'} images · ${fps.toFixed(0)} images/s · reste ${dur(left)}`;
+      meta = `${it.frames} / ${it.expected || '?'} images · ${fps.toFixed(0)} images/s · reste ${hms(left)}`;
       bar = `<div class="bar"><div style="width:${pct}%"></div></div>`;
     } else {
       meta = `Finalisation de la vidéo et du son… (${it.encoded} / ${it.frames} images encodées)`;
@@ -293,7 +304,8 @@ function itemHtml(it) {
     meta = 'Chargement de la démo dans Portal 2…'; bar = '<div class="bar indet"><div></div></div>';
   } else if (it.state === 'done') {
     const fps = it.renderMs > 0 ? (it.frames * 1000 / it.renderMs).toFixed(0) : '?';
-    meta = `${dur(it.seconds)} de vidéo rendue en ${dur(it.renderMs / 1000)} · ${fps} images/s`;
+    meta = `${hms(it.seconds)} de vidéo rendue en <b>${hms(it.renderMs / 1000)}</b> · ${fps} images/s · ` +
+           `<a class="link" data-act="folder" data-id="${it.id}" title="Afficher dans l’explorateur : ${esc(it.output)}">${esc(baseName(it.output) || 'la vidéo')}</a>`;
   } else if (it.state === 'failed') {
     meta = `<span class="err">${esc(it.message || 'échec')}</span>`;
   }
