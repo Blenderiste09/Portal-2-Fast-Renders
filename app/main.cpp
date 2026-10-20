@@ -437,9 +437,10 @@ static void DownloadFfmpeg()
     Log("ffmpeg ready: %s", Narrow(FfmpegPath()).c_str());
 }
 
-// Mutes the game in the Windows mixer (invisible rendering): only its output, the engine still
-// mixes the sound that goes into the video.
-static void MuteProcessAudio(DWORD pid)
+// Mutes (or restores) the game in the Windows mixer: invisible rendering must not be heard, but the
+// engine still mixes the sound that goes into the video. Windows remembers a per-app mute, so the
+// game has to be unmuted before it goes away, otherwise a later normal launch stays silent.
+static void MuteProcessAudio(DWORD pid, bool mute)
 {
     IMMDeviceEnumerator* en = nullptr;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en)))) return;
@@ -461,7 +462,7 @@ static void MuteProcessAudio(DWORD pid)
                         if (SUCCEEDED(c->QueryInterface(IID_PPV_ARGS(&vol)))) {
                             BOOL muted = FALSE;
                             vol->GetMute(&muted);
-                            if (!muted) vol->SetMute(TRUE, nullptr);
+                            if (!!muted != mute) vol->SetMute(mute, nullptr);
                             vol->Release();
                         }
                     }
@@ -685,7 +686,7 @@ static bool StartGame(int w, int h, bool hidden, string& err)
             err = "Portal 2 s'est fermé pendant le démarrage";
             return false;
         }
-        if (hidden) MuteProcessAudio(pid);
+        if (hidden) MuteProcessAudio(pid, true);
         if (!g_ctrl) {
             g_ctrlMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name);
             if (g_ctrlMap) g_ctrl = (P2RControl*)MapViewOfFile(g_ctrlMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(P2RControl));
@@ -710,6 +711,7 @@ static bool StartGame(int w, int h, bool hidden, string& err)
 static void QuitGame()
 {
     if (g_ctrl && GameAlive()) {
+        MuteProcessAudio(g_gamePid, false); // leave the game audible for its next, normal launch
         g_ctrl->cmd = CMD_QUIT;
         MemoryBarrier();
         ++g_ctrl->cmd_seq;
@@ -790,7 +792,10 @@ static bool RenderItem(int id)
         }
         string err;
         if (!StartGame(s.width, s.height, hidden, err)) {
-            if (GameAlive()) TerminateProcess(g_gameProc, 1);
+            if (GameAlive()) {
+                MuteProcessAudio(g_gamePid, false); // don't leave the game silent for its next launch
+                TerminateProcess(g_gameProc, 1);
+            }
             CloseSession();
             finish(g_cancel ? ItemState::Cancelled : ItemState::Failed, err);
             SetStatus(err);
@@ -851,7 +856,7 @@ static bool RenderItem(int id)
     for (;;) {
         Sleep(100);
         if (hidden && GetTickCount() - lastMute > 1000) {
-            MuteProcessAudio(g_gamePid);
+            MuteProcessAudio(g_gamePid, true);
             lastMute = GetTickCount();
         }
         if (!GameAlive()) {
@@ -1253,6 +1258,12 @@ static string Handle(const Request& r, int& code, const char*& type)
     if (r.path == "/api/cancel" && r.method == "POST") {
         g_cancel = true;
         SetStatus("Annulation…");
+        return "{\"ok\":true}";
+    }
+    if (r.path == "/api/quit-game" && r.method == "POST") {
+        // Also restores the game's sound (see MuteProcessAudio) so a later normal launch hears it.
+        std::lock_guard<std::mutex> l(g_mx);
+        QuitGame();
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-out" && r.method == "POST") {

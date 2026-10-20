@@ -87,7 +87,7 @@ frames in ~1.3 s, the MP4 in `<Videos>\P2Render` (the owner's Videos folder is `
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
 `a2_228.dem`) must fail fast with "la démo n'a pas démarré". Check a video with `tools/preview`.
 
-API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise`.
+API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|quit-game`.
 `POST /api/visualise {path,dir,out,ffArgs,ffmpegPath,width,height,fps}` renders one demo **hidden** and
 has ffmpeg write a live stream (HLS playlist or fragmented MP4) into `dir`: the demo can be watched
 while it renders. Used by the POC below.
