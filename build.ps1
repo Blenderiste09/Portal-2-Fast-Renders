@@ -1,14 +1,17 @@
 # Builds build\d3d9.dll (x86, static CRT) with the Visual Studio 18 toolchain.
+# The proxy goes into <Portal 2>\bin: shaderapidx9.dll is loaded from bin\ by full path, so its
+# d3d9.dll import is looked up in bin\ first; a d3d9.dll next to portal2.exe is NOT picked up.
 #   .\build.ps1             build
-#   .\build.ps1 -Deploy     also copy d3d9.dll (+ .pdb) next to portal2.exe
+#   .\build.ps1 -Deploy     also copy d3d9.dll (+ .pdb) into <Portal 2>\bin
 #   .\build.ps1 -Undeploy   remove them from the game folder (the game is plain D3D9 again)
 param([switch]$Deploy, [switch]$Undeploy, [string]$GameDir = "E:\Program Files (x86)\Steam\steamapps\common\Portal 2")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$binDir = Join-Path $GameDir "bin"
 
 if ($Undeploy) {
     foreach ($f in "d3d9.dll", "d3d9.pdb") {
-        $p = Join-Path $GameDir $f
+        $p = Join-Path $binDir $f
         if (Test-Path $p) { Remove-Item $p; Write-Host "removed $p" }
     }
     return
@@ -40,7 +43,7 @@ try {
 } finally { Pop-Location }
 
 if ($Deploy) {
-    Copy-Item (Join-Path $out "d3d9.dll") (Join-Path $GameDir "d3d9.dll") -Force
-    Copy-Item (Join-Path $out "d3d9.pdb") (Join-Path $GameDir "d3d9.pdb") -Force
-    Write-Host "deployed to $GameDir"
+    Copy-Item (Join-Path $out "d3d9.dll") (Join-Path $binDir "d3d9.dll") -Force
+    Copy-Item (Join-Path $out "d3d9.pdb") (Join-Path $binDir "d3d9.pdb") -Force
+    Write-Host "deployed to $binDir"
 }

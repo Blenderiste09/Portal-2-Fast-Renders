@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <d3d9.h>
 #include <intrin.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "log.h"
@@ -37,6 +38,7 @@ struct Stats {
 };
 static Stats g_stats;
 static volatile LONG g_frames;
+static long g_shotFrame = -1; // -d3d9ex_shot <frame>
 
 bool Enabled() { return g_enabled; }
 IDirect3DDevice9Ex* Device() { return g_device; }
@@ -45,6 +47,7 @@ void Init()
 {
     const char* cmd = GetCommandLineA();
     if (strstr(cmd, "-nod3d9ex")) g_enabled = false;
+    if (const char* s = strstr(cmd, "-d3d9ex_shot ")) g_shotFrame = atol(s + 13);
     LOG("d3d9ex %s", g_enabled ? "enabled" : "disabled by -nod3d9ex");
 }
 
@@ -122,6 +125,20 @@ static HRESULT STDMETHODCALLTYPE Hook_IBLock(void* self, UINT off, UINT size, vo
 static HRESULT STDMETHODCALLTYPE Hook_SurfLockRect(IDirect3DSurface9* self, D3DLOCKED_RECT* lr, const RECT* r, DWORD flags)
 {
     HRESULT hr = o_SurfLockRect(self, lr, r, flags);
+    if (FAILED(hr) && r) {
+        // A DXT level smaller than a 4x4 block (2x1, 4x2...) cannot be locked with a rect in the
+        // DEFAULT pool, even when the rect is the whole level (MANAGED accepted it). Locking the
+        // whole level without a rect works.
+        D3DSURFACE_DESC d = {};
+        self->GetDesc(&d);
+        if (r->left == 0 && r->top == 0 && (UINT)r->right == d.Width && (UINT)r->bottom == d.Height) {
+            HRESULT hr2 = o_SurfLockRect(self, lr, nullptr, flags);
+            if (SUCCEEDED(hr2)) {
+                InterlockedIncrement(&g_stats.lockRetryOk);
+                return hr2;
+            }
+        }
+    }
     if (FAILED(hr) && InterlockedIncrement(&g_stats.lockFail) <= 50) {
         D3DSURFACE_DESC d = {};
         self->GetDesc(&d);
@@ -311,10 +328,62 @@ static HRESULT STDMETHODCALLTYPE Hook_Reset(IDirect3DDevice9* dev, D3DPRESENT_PA
     return hr;
 }
 
+// Diagnostic: -d3d9ex_shot <frame> writes the back buffer of that Present to d3d9ex_shot.bmp
+// (next to portal2.exe). Goes through a resolve (the back buffer may be multisampled) and a
+// system-memory copy, i.e. the slow path the shared-texture capture is meant to replace.
+
+static void SaveBackBuffer(IDirect3DDevice9* dev, const char* path)
+{
+    IDirect3DSurface9 *bb = nullptr, *rt = nullptr, *sys = nullptr;
+    D3DSURFACE_DESC d = {};
+    HRESULT hr = dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
+    if (SUCCEEDED(hr)) hr = bb->GetDesc(&d);
+    if (SUCCEEDED(hr)) hr = dev->CreateRenderTarget(d.Width, d.Height, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &rt, nullptr);
+    if (SUCCEEDED(hr)) hr = dev->StretchRect(bb, nullptr, rt, nullptr, D3DTEXF_NONE);
+    if (SUCCEEDED(hr)) hr = dev->CreateOffscreenPlainSurface(d.Width, d.Height, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &sys, nullptr);
+    if (SUCCEEDED(hr)) hr = dev->GetRenderTargetData(rt, sys);
+    D3DLOCKED_RECT lr = {};
+    if (SUCCEEDED(hr)) hr = sys->LockRect(&lr, nullptr, D3DLOCK_READONLY);
+    if (SUCCEEDED(hr)) {
+        BITMAPFILEHEADER fh = {};
+        BITMAPINFOHEADER ih = {};
+        ih.biSize = sizeof(ih);
+        ih.biWidth = d.Width;
+        ih.biHeight = -(LONG)d.Height;
+        ih.biPlanes = 1;
+        ih.biBitCount = 32;
+        DWORD bytes = d.Width * 4 * d.Height;
+        fh.bfType = 0x4d42;
+        fh.bfOffBits = sizeof(fh) + sizeof(ih);
+        fh.bfSize = fh.bfOffBits + bytes;
+        HANDLE f = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (f != INVALID_HANDLE_VALUE) {
+            DWORD w;
+            WriteFile(f, &fh, sizeof(fh), &w, nullptr);
+            WriteFile(f, &ih, sizeof(ih), &w, nullptr);
+            for (UINT y = 0; y < d.Height; ++y)
+                WriteFile(f, (BYTE*)lr.pBits + y * lr.Pitch, d.Width * 4, &w, nullptr);
+            CloseHandle(f);
+        }
+        sys->UnlockRect();
+    }
+    LOG("back buffer %ux%u fmt %d ms %d -> %s: 0x%08lx", d.Width, d.Height, d.Format, d.MultiSampleType, path, hr);
+    if (sys) sys->Release();
+    if (rt) rt->Release();
+    if (bb) bb->Release();
+}
+
 static HRESULT STDMETHODCALLTYPE Hook_Present(IDirect3DDevice9* dev, const RECT* src, const RECT* dst, HWND wnd, const RGNDATA* dirty)
 {
     LONG f = InterlockedIncrement(&g_frames);
     if (f == 1 || f % 3000 == 0) LogStats("present");
+    if (f == g_shotFrame) {
+        char path[MAX_PATH];
+        DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
+        while (n > 0 && path[n - 1] != '\\') --n;
+        strcpy_s(path + n, MAX_PATH - n, "d3d9ex_shot.bmp");
+        SaveBackBuffer(dev, path);
+    }
     return o_Present(dev, src, dst, wnd, dirty);
 }
 
