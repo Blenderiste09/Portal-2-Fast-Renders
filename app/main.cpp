@@ -543,6 +543,18 @@ static string g_gameState = "stopped"; // stopped | starting | ready | busy
 static DWORD g_gamePid;
 static std::atomic<DWORD> g_lastPoll;
 
+// Live "Visualiser" job (POC): one demo rendered hidden while ffmpeg writes a live stream (HLS /
+// fragmented MP4) into a folder owned by the caller, which serves it to its player.
+struct StreamSpec {
+    bool active = false;
+    int id = 0;              // item id this applies to
+    int width = 1280, height = 720, fps = 60;
+    wstring dir, out;        // output folder + name of the stream file (playlist or .mp4)
+    wstring ffmpegPath;      // empty = auto
+    wstring ffArgs;          // ffmpeg output options (encoders + muxer), see the POC
+};
+static StreamSpec g_stream;  // guarded by g_mx
+
 static Item* FindItem(int id)
 {
     for (Item& i : g_items)
@@ -725,6 +737,7 @@ static wstring UniqueOutput(const wstring& dir, const wstring& base, const wstri
 static bool RenderItem(int id)
 {
     Settings s;
+    StreamSpec stream;
     wstring src;
     {
         std::lock_guard<std::mutex> l(g_mx);
@@ -732,6 +745,13 @@ static bool RenderItem(int id)
         Item* it = FindItem(id);
         if (!it) return true;
         src = it->path;
+        if (g_stream.active && g_stream.id == id) {
+            stream = g_stream;
+            s.width = stream.width;
+            s.height = stream.height;
+            s.fps = stream.fps;
+            s.showWindow = false; // a live stream is always rendered hidden
+        }
         it->state = ItemState::Loading;
         it->frames = it->encoded = it->renderMs = 0;
         it->expected = (int)(it->info.seconds * s.fps + 0.5f);
@@ -750,13 +770,14 @@ static bool RenderItem(int id)
     if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height || g_sessionHidden != hidden))
         QuitGame(); // new resolution or display mode
     wstring ffmpeg;
-    if (s.advanced) {
+    if (s.advanced || stream.active) {
         {
             std::lock_guard<std::mutex> l(g_mx);
-            ffmpeg = FfmpegPath();
+            ffmpeg = stream.active && !stream.ffmpegPath.empty() ? stream.ffmpegPath : FfmpegPath();
         }
         if (ffmpeg.empty()) {
-            finish(ItemState::Failed, "mode avancé : ffmpeg introuvable (télécharge-le ou choisis ffmpeg.exe dans les réglages)");
+            finish(ItemState::Failed, stream.active ? "ffmpeg introuvable (le flux ne peut pas être écrit)"
+                                                    : "mode avancé : ffmpeg introuvable (télécharge-le ou choisis ffmpeg.exe dans les réglages)");
             return true;
         }
     }
@@ -791,9 +812,15 @@ static bool RenderItem(int id)
         finish(ItemState::Failed, "impossible de copier la démo dans le dossier du jeu");
         return true;
     }
-    CreateDirectoryW(s.outDir.c_str(), nullptr);
-    SHCreateDirectoryExW(nullptr, s.outDir.c_str(), nullptr);
-    wstring out = UniqueOutput(s.outDir, StripExt(FileName(src)), s.advanced ? Widen(s.container) : L"mp4");
+    wstring out;
+    if (stream.active) {
+        SHCreateDirectoryExW(nullptr, stream.dir.c_str(), nullptr);
+        out = stream.dir + L"\\" + stream.out;
+    } else {
+        CreateDirectoryW(s.outDir.c_str(), nullptr);
+        SHCreateDirectoryExW(nullptr, s.outDir.c_str(), nullptr);
+        out = UniqueOutput(s.outDir, StripExt(FileName(src)), s.advanced ? Widen(s.container) : L"mp4");
+    }
 
     P2RJob job = {};
     sprintf_s(job.demo, "p2render_tmp/demo%d", id);
@@ -802,7 +829,12 @@ static bool RenderItem(int id)
     job.codec = s.codec == "hevc" ? P2R_HEVC : P2R_H264;
     job.bitrate_kbps = Bitrate(s);
     job.show_window = s.showWindow;
-    if (s.advanced) {
+    if (stream.active) {
+        job.use_ffmpeg = 1;
+        job.stream = 1;
+        wcscpy_s(job.ffmpeg_path, ffmpeg.c_str());
+        wcsncpy_s(job.ff_video_args, stream.ffArgs.c_str(), _TRUNCATE);
+    } else if (s.advanced) {
         job.use_ffmpeg = 1;
         wcscpy_s(job.ffmpeg_path, ffmpeg.c_str());
         wcsncpy_s(job.ff_video_args, Widen(s.ffVideo).c_str(), _TRUNCATE);
@@ -1173,6 +1205,39 @@ static string Handle(const Request& r, int& code, const char*& type)
             }
         return "{\"ok\":true}";
     }
+    if (r.path == "/api/visualise" && r.method == "POST") {
+        // Live "Visualiser" (POC): one demo, rendered hidden, streamed while it renders.
+        // {"path","dir","out","ffArgs","ffmpegPath","width","height","fps"}
+        StreamSpec sp;
+        string v;
+        wstring path;
+        if (JsonRaw(b, "path", v)) path = Widen(v);
+        if (JsonRaw(b, "dir", v)) sp.dir = Widen(v);
+        if (JsonRaw(b, "out", v)) sp.out = Widen(v);
+        if (JsonRaw(b, "ffArgs", v)) sp.ffArgs = Widen(v);
+        if (JsonRaw(b, "ffmpegPath", v)) sp.ffmpegPath = Widen(v);
+        sp.width = std::clamp(JsonInt(b, "width", sp.width), 320, 7680);
+        sp.height = std::clamp(JsonInt(b, "height", sp.height), 240, 4320);
+        sp.fps = std::clamp(JsonInt(b, "fps", sp.fps), 1, 1000);
+        if (path.empty() || sp.dir.empty() || sp.out.empty() || sp.ffArgs.empty())
+            return "{\"error\":\"path, dir, out et ffArgs sont obligatoires\"}";
+        if (sp.out.find_first_of(L"\\\\/:*?\"<>|") != wstring::npos) return "{\"error\":\"out doit être un simple nom de fichier\"}";
+        if (!FileExists(path)) return "{\"error\":\"la démo n'existe pas\"}";
+        if (!ReadDemo(path).ok) return "{\"error\":\"ce fichier n'est pas une démo Source\"}";
+        std::lock_guard<std::mutex> l(g_mx);
+        if (g_running) return "{\"error\":\"un rendu est déjà en cours\"}";
+        g_items.clear();
+        AddDemo(path);
+        sp.active = true;
+        sp.id = g_items.back().id;
+        g_stream = sp;
+        g_running = true;
+        g_cancel = false;
+        g_status = "Rendu en cours";
+        Log("visualise %d: %s -> %s\\%s", sp.id, Narrow(path).c_str(), Narrow(sp.dir).c_str(), Narrow(sp.out).c_str());
+        std::thread(Worker).detach();
+        return "{\"ok\":true,\"id\":" + std::to_string(sp.id) + "}";
+    }
     if (r.path == "/api/start" && r.method == "POST") {
         std::lock_guard<std::mutex> l(g_mx);
         if (!g_running) {
@@ -1341,10 +1406,11 @@ static wstring FindEdge()
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 {
-    // One instance at a time.
+    // One instance at a time (a headless run exits silently: no invisible dialog left to click).
+    bool headless = cmdLine && wcsstr(cmdLine, L"--no-window");
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\P2Render_single");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(nullptr, L"P2Render est déjà ouvert.", L"P2Render", MB_ICONINFORMATION);
+        if (!headless) MessageBoxW(nullptr, L"P2Render est déjà ouvert.", L"P2Render", MB_ICONINFORMATION);
         return 0;
     }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -1380,7 +1446,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
     }).detach();
 
     // --no-window: server only (tests); the URL is in p2render.log.
-    bool headless = cmdLine && wcsstr(cmdLine, L"--no-window");
     HANDLE edge = nullptr;
     if (!headless) {
         wstring exe = FindEdge();

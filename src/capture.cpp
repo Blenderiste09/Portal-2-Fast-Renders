@@ -193,6 +193,7 @@ static bool StartEncoder(Session& s)
     wcscpy_s(m->out_path, s.job.out_path);
     wcscpy_s(m->wav_path, s.wavPath);
     m->use_ffmpeg = s.job.use_ffmpeg;
+    m->stream = s.job.stream;
     wcscpy_s(m->ffmpeg_path, s.job.ffmpeg_path);
     wcscpy_s(m->ff_video_args, s.job.ff_video_args);
     wcscpy_s(m->ff_audio_args, s.job.ff_audio_args);

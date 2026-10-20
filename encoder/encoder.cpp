@@ -275,7 +275,29 @@ static int WaitFfmpeg(HANDLE proc)
     return (int)code;
 }
 
-static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* tmpVideo)
+// The engine WAV (startmovie ... wav) exists before the first frame and grows while we render: its
+// header sizes are only fixed up when the engine closes it, so ffmpeg reads it with -ignore_length.
+// True when it can be read (the engine must allow sharing) and starts with a RIFF/WAVE header.
+static bool WaveReadable(const wchar_t* path)
+{
+    for (int i = 0; i < 20; ++i) {
+        HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            char head[12] = {};
+            DWORD n = 0;
+            BOOL ok = ReadFile(h, head, sizeof(head), &n, nullptr);
+            LARGE_INTEGER sz = {};
+            GetFileSizeEx(h, &sz);
+            CloseHandle(h);
+            if (ok && n == sizeof(head) && memcmp(head, "RIFF", 4) == 0 && memcmp(head + 8, "WAVE", 4) == 0 && sz.QuadPart >= 44)
+                return true;
+        }
+        Sleep(100);
+    }
+    return false;
+}
+
+static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* outFile)
 {
     P2RShared* m = g_shm;
     D3D11_TEXTURE2D_DESC td;
@@ -285,9 +307,20 @@ static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* tmpVideo)
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     td.MiscFlags = 0;
     for (auto& s : f.staging) CHECK(v.dev->CreateTexture2D(&td, nullptr, &s));
-    wchar_t args[2048];
-    swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s -an \"%s\"",
-               m->width, m->height, m->fps, m->ff_video_args, tmpVideo);
+    wchar_t args[2600];
+    if (m->stream) {
+        // Live output: ffmpeg gets the sound as a second input and muxes it while it is written.
+        // No -map here: it picks one video and (when present) one audio stream from the inputs.
+        wchar_t audio[600] = L"";
+        if (wcsstr(m->ff_video_args, L"-an")) Log("stream without sound (-an)");
+        else if (WaveReadable(m->wav_path)) swprintf_s(audio, L"-ignore_length 1 -f wav -i \"%s\" ", m->wav_path);
+        else Log("no live sound (%ls is not readable), streaming the video alone", m->wav_path);
+        swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s%s \"%s\"",
+                   m->width, m->height, m->fps, audio, m->ff_video_args, outFile);
+    } else {
+        swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s -an \"%s\"",
+                   m->width, m->height, m->fps, m->ff_video_args, outFile);
+    }
     if (!StartFfmpeg(args, &f.in, &f.proc)) return Fail("impossible de lancer ffmpeg (%ls)", m->ffmpeg_path);
     return 0;
 }
@@ -442,8 +475,10 @@ static int Run(unsigned id)
     if (!semReady || !semFree || !evStarted || !game) return Fail("cannot open the synchronisation objects");
 
     bool ff = m->use_ffmpeg != 0;
+    bool stream = ff && m->stream != 0;
     wchar_t videoPath[540];
-    swprintf_s(videoPath, ff ? L"%s.video.mkv" : L"%s.video.mp4", m->out_path);
+    if (stream) wcscpy_s(videoPath, m->out_path); // the live stream is written where the final file would be
+    else swprintf_s(videoPath, ff ? L"%s.video.mkv" : L"%s.video.mp4", m->out_path);
     DeleteFileW(videoPath);
 
     CHECK(MFStartup(MF_VERSION, MFSTARTUP_LITE));
@@ -492,6 +527,14 @@ static int Run(unsigned id)
     if (frames == 0) {
         DeleteFileW(videoPath);
         return Fail("no frame");
+    }
+    if (stream) {
+        // The stream is the result: the sound is already muxed in it, nothing to assemble.
+        DeleteFileW(m->wav_path);
+        MFShutdown();
+        m->enc_state = P2R_ENC_DONE;
+        Log("stream done: %ls", m->out_path);
+        return 0;
     }
     DeleteFileW(m->out_path);
     bool wav = WaitFileClosed(m->wav_path, 30000);
