@@ -30,6 +30,8 @@ void AddCommand(const char* name, const char* help, CommandCallback cb);
 void Run(const char* cmd);                   // ClientCmd_Unrestricted (runs later in the frame)
 const char* GetCvarString(const char* name); // null if unknown
 bool IsPlayingDemo();
+bool IsInGame();                             // fully signed on
+bool IsLoading();                            // loading screen shown
 const char* GameDir();                       // <Portal 2>\portal2 (no trailing slash)
 
 // Engine movie frames: when set, the callback replaces CVideoMode::WriteMovieFrame (which reads

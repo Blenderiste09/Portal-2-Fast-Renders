@@ -1,0 +1,9 @@
+<!doctype html><html><body style="background:#222;color:#eee;font:14px sans-serif">
+<div id="info">loading</div>
+<video id="v" src="test.mp4" muted style="display:none"></video>
+<div id="c"></div>
+<script>
+const v=document.getElementById('v');const times=[1,4,7,11];let i=0;
+v.addEventListener('loadedmetadata',()=>{document.getElementById('info').textContent=`duration ${v.duration.toFixed(2)} s, ${v.videoWidth}x${v.videoHeight}, audio tracks: ${v.audioTracks?v.audioTracks.length:'?'} mozHasAudio ${v.mozHasAudio} webkitAudioDecodedByteCount ${v.webkitAudioDecodedByteCount}`;v.currentTime=times[0];});
+v.addEventListener('seeked',()=>{const cv=document.createElement('canvas');cv.width=480;cv.height=270;cv.getContext('2d').drawImage(v,0,0,480,270);const d=document.createElement('div');d.textContent='t='+times[i];document.getElementById('c').append(d,cv);i++;if(i<times.length)v.currentTime=times[i];else document.title='done';});
+</script></body></html>

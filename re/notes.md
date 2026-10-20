@@ -53,3 +53,27 @@ Steam build (PatchVersion 2.0.0.1, file dated 2026-10-04). Ghidra projects: `mac
 `shaderapidx9.dll` is loaded from `bin\` by full path, so its `d3d9.dll` import is searched in `bin\`
 first. A `d3d9.dll` next to `portal2.exe` is NOT loaded (verified: the system one was mapped).
 `bin\d3d9.dll` is.
+
+## Engine pieces used by the renderer (Windows engine.dll, same as ChocolateLoading's win_engine)
+
+- **CL_TakeSnapshotAndSwap** = `engine!0x10097ae0` (Mac `CL_TakeSnapshotAndSwap` 0x149af0): after
+  screenshots, `if (cl_movieinfo.name[0] && !console_visible() && !...) { videomode->WriteMovieFrame
+  (&cl_movieinfo); cl_movieinfo.frame++; }` then Shader_SwapBuffers (Present). Call site at
+  0x10097e82: `8B 0D <videomode> 8B 11 8B 42 5C 68 <cl_movieinfo> FF D0 FF 05 <frame>` (unique
+  pattern; `videomode` global 0x106b5d38, cl_movieinfo 0x10433d28: name[0x100], +0x100 frame,
+  +0x104 flags).
+- **CVideoMode_Common::WriteMovieFrame** (vtable slot 23, Mac 0x323fe0) **always** reads the back
+  buffer to the CPU (`ReadScreenPixels`, w*h*3 buffer) and only then checks the flags (1 TGA,
+  0x10 JPG, 2 AVI). `startmovie x wav` therefore still pays the readback: we replace the slot.
+- **startmovie** command = 0x10098250, endmovie = 0x10098510 (CL_StopMovie 0x100981c0), StartMovie
+  0x10097f50: movie fps = `host_framerate` value (30 when 0), flags: 4 = wav (`<name>.WAV` in the game
+  dir, 44100 Hz stereo 16 bit). The WAV is written while the movie runs; frames are only written
+  when the console is hidden.
+- **CEngine::FilterTime(float dt, float& minFrameTime)** = 0x101f9d40 (thiscall, `this` unused, ret 8).
+- IVEngineClient (vtable 0x103553f4) slots used: 25 IsInGame, 27 IsDrawingLoadingImage, **78
+  IsPlayingDemo** (0x101b68e0 -> demoplayer vtable +0x18; the Mac demoplayer slot is +0x1c: MSVC has
+  one destructor slot less), 79 IsRecordingDemo, 80 IsPlayingTimeDemo, 104 ExecuteClientCmd
+  (0x10079d20: Cbuf_AddText + Cbuf_Execute), 108 ClientCmd_Unrestricted.
+- `wait` does not exist in Portal 2 ("Unknown command"); `+exec` on the command line runs before the
+  client frame hook, so our commands are not yet registered then (hence `-p2r_exec`, `p2r_after`).
+- Demos recorded before the 2026 game update fail with `DataTable_ParseClientTablesFromBuffer`.

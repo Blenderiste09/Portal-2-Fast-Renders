@@ -47,7 +47,9 @@ struct Session {
 
     unsigned id = 0;        // names the kernel objects; passed to the encoder
     int frames = 0;         // frames captured
-    bool sawDemo = false;
+    DWORD armTick = 0;
+    int readyFrames = 0;
+    int notPlayingFrames = 0;
     DWORD startTick = 0;
     wchar_t outPath[MAX_PATH], wavPath[MAX_PATH];
 };
@@ -262,33 +264,89 @@ static void Finish(Session& s, const char* why)
 }
 
 // Main thread, FRAME_START.
+// p2r_after <frames> <command...>: Portal 2 has no "wait" command; this one schedules a console
+// command a number of frames later (unattended tests and recordings).
+struct Scheduled {
+    int frames;
+    char cmd[256];
+};
+static Scheduled g_sched[32];
+static int g_numSched;
+
+static void RunScheduled()
+{
+    for (int i = 0; i < g_numSched;) {
+        if (--g_sched[i].frames <= 0) {
+            char cmd[256];
+            strcpy_s(cmd, g_sched[i].cmd);
+            g_sched[i] = g_sched[--g_numSched];
+            engine::Run(cmd);
+        } else {
+            ++i;
+        }
+    }
+}
+
+static void Cmd_After(const CCommand& args)
+{
+    if (args.ArgC() < 3 || g_numSched >= 32) {
+        engine::Msg("usage: p2r_after <frames> <command...>");
+        return;
+    }
+    Scheduled& e = g_sched[g_numSched++];
+    e.frames = atoi(args.Arg(1));
+    e.cmd[0] = 0;
+    for (int i = 2; i < args.ArgC(); ++i) {
+        if (i > 2) strcat_s(e.cmd, " ");
+        strcat_s(e.cmd, args.Arg(i));
+    }
+}
+
 static void OnFrame()
 {
+    RunScheduled();
     Session& s = g_s;
     switch (s.state) {
     case State::Idle:
         break;
-    case State::Arming:
+    case State::Arming: {
         // mat_queue_mode 0 is applied at the end of a frame: the device must only be used from the
-        // main thread before the movie starts.
-        if (++s.armFrames == 3) {
-            char cmd[512];
-            char base[200];
-            sprintf_s(base, "p2r_tmp_%s", s.opt.name);
-            sprintf_s(cmd, "startmovie \"%s\" wav", base);
+        // main thread once the movie starts. With a demo, the movie starts when the demo is in game
+        // (not during its map load), so the video and the engine WAV start on the same frame.
+        ++s.armFrames;
+        char cmd[512];
+        if (s.armFrames == 3 && s.opt.demo[0]) {
+            sprintf_s(cmd, "playdemo \"%s\"", s.opt.demo);
             engine::Run(cmd);
-            if (s.opt.demo[0]) {
-                sprintf_s(cmd, "playdemo \"%s\"", s.opt.demo);
-                engine::Run(cmd);
+            s.armTick = GetTickCount();
+        }
+        bool go = false;
+        if (s.armFrames >= 3) {
+            if (!s.opt.demo[0]) {
+                go = true;
+            } else if (engine::IsPlayingDemo() && engine::IsInGame() && !engine::IsLoading()) {
+                go = ++s.readyFrames >= 2;
+            } else if (GetTickCount() - s.armTick > 120000) {
+                Fail(s, "the demo did not start");
+                break;
             }
+        }
+        if (go) {
+            sprintf_s(cmd, "startmovie \"p2r_tmp_%s\" wav", s.opt.name);
+            engine::Run(cmd);
             s.state = State::Recording;
         }
         break;
+    }
     case State::Recording:
-        if (engine::IsPlayingDemo()) {
-            s.sawDemo = true;
-        } else if (s.sawDemo) {
-            Finish(s, "demo finished");
+        // With a demo: stop when it is over (not playing for a few frames).
+        if (s.opt.demo[0] && s.frames > 0) {
+            if (engine::IsPlayingDemo()) {
+                s.notPlayingFrames = 0;
+            } else if (++s.notPlayingFrames >= 10) {
+                Finish(s, "demo finished");
+                break;
+            }
         }
         if (s.process && s.gpuReady && !EncoderAlive(s)) Fail(s, "the encoder exited");
         break;
@@ -433,7 +491,17 @@ static void OnEngineReady()
     engine::SetFrameCallback(OnFrame);
     engine::AddCommand("p2r_start", "Render the engine movie (startmovie) with the GPU encoder. p2r_start for usage.", Cmd_Start);
     engine::AddCommand("p2r_stop", "Stop a render started with p2r_start.", Cmd_Stop);
+    engine::AddCommand("p2r_after", "p2r_after <frames> <command...>: run a command later (there is no wait).", Cmd_After);
     engine::Msg("p2r ready (D3D9Ex %s): p2r_start <name> [demo=<demo>] [fps=60] ...", d3d9ex::Device() ? "on" : "OFF");
+
+    // -p2r_exec <cfg>: runs a cfg once our commands exist (+exec on the command line runs before
+    // the client is up, when p2r_start is still unknown). For unattended renders.
+    if (const char* p = strstr(GetCommandLineA(), "-p2r_exec ")) {
+        char cfg[128] = {}, cmd[160];
+        sscanf_s(p + 10, "%127s", cfg, (unsigned)sizeof(cfg));
+        sprintf_s(cmd, "exec %s", cfg);
+        engine::Run(cmd);
+    }
 }
 
 void Init(HMODULE self) { g_self = self; }

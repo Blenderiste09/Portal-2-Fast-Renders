@@ -38,7 +38,10 @@ static_assert(sizeof(ConCommandBase) == 0x18, "ConCommandBase layout");
 
 enum { FCVAR_DONTRECORD = 1 << 17 };
 enum { ICVAR_RegisterConCommand = 9, ICVAR_FindCommandBase = 13, ICVAR_FindVar = 15 };
-enum { ENG_IsPlayingDemo = 78, ENG_ClientCmd_Unrestricted = 108 };
+// Windows slots (MSVC: one destructor slot less than the Mac build in the demo player, the
+// IVEngineClient order is the same): 25 IsInGame, 27 IsDrawingLoadingImage, 78 IsPlayingDemo
+// (-> demoplayer slot 6), 108 ClientCmd_Unrestricted.
+enum { ENG_IsInGame = 25, ENG_IsDrawingLoadingImage = 27, ENG_IsPlayingDemo = 78, ENG_ClientCmd_Unrestricted = 108 };
 enum { CLIENT_FrameStageNotify = 35 };
 enum { VIDEOMODE_WriteMovieFrame = 23 };
 
@@ -230,6 +233,14 @@ bool IsPlayingDemo()
 {
     return g_engclient && VFunc<bool(__thiscall*)(void*)>(g_engclient, ENG_IsPlayingDemo)(g_engclient);
 }
+
+static bool EngBool(int slot)
+{
+    return g_engclient && VFunc<bool(__thiscall*)(void*)>(g_engclient, slot)(g_engclient);
+}
+
+bool IsInGame() { return EngBool(ENG_IsInGame); }
+bool IsLoading() { return EngBool(ENG_IsDrawingLoadingImage); }
 
 const char* GameDir() { return g_gameDir; }
 
