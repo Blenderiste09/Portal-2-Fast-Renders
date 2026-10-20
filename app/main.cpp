@@ -188,7 +188,6 @@ struct Settings {
     string quality = "high";     // standard | high | max
     wstring outDir;
     wstring gameDir;             // empty = found through Steam
-    bool showWindow = false;     // false = invisible rendering (game window hidden, game sound muted)
     bool closeGame = true;
     // Advanced mode: encode with ffmpeg (the interface builds the arguments).
     bool advanced = false;
@@ -227,7 +226,6 @@ static void LoadSettings()
     s.quality = Narrow(IniGet(L"quality", L"high"));
     s.outDir = IniGet(L"outDir", s.outDir);
     s.gameDir = IniGet(L"gameDir", L"");
-    s.showWindow = IniGet(L"showWindow", L"0") == L"1";
     s.closeGame = IniGet(L"closeGame", L"1") == L"1";
     s.advanced = IniGet(L"advanced", L"0") == L"1";
     s.ffmpegPath = IniGet(L"ffmpegPath", L"");
@@ -250,7 +248,6 @@ static void SaveSettings()
     IniSet(L"quality", Widen(s.quality));
     IniSet(L"outDir", s.outDir);
     IniSet(L"gameDir", s.gameDir);
-    IniSet(L"showWindow", s.showWindow ? L"1" : L"0");
     IniSet(L"closeGame", s.closeGame ? L"1" : L"0");
     IniSet(L"advanced", s.advanced ? L"1" : L"0");
     IniSet(L"ffmpegPath", s.ffmpegPath);
@@ -597,7 +594,6 @@ static HANDLE g_gameProc;
 static HANDLE g_ctrlMap;
 static P2RControl* g_ctrl;
 static int g_sessionW, g_sessionH;
-static bool g_sessionHidden;
 
 static bool GameAlive() { return g_gameProc && WaitForSingleObject(g_gameProc, 0) == WAIT_TIMEOUT; }
 
@@ -630,7 +626,7 @@ static void SetStatus(const string& s)
 }
 
 // Runs p2r_launch.exe and waits for the core to be ready. Called from the worker thread.
-static bool StartGame(int w, int h, bool hidden, string& err)
+static bool StartGame(int w, int h, string& err)
 {
     wstring game = GameDir();
     if (game.empty()) {
@@ -646,7 +642,7 @@ static bool StartGame(int w, int h, bool hidden, string& err)
                   std::to_wstring(w) + L" -h " + std::to_wstring(h);
     Log("launch: %s", Narrow(cmd).c_str());
     // Inherited by p2r_launch.exe and the game: start hidden, keep the window hidden (core).
-    SetEnvironmentVariableW(L"P2R_HIDDEN", hidden ? L"1" : L"0");
+    SetEnvironmentVariableW(L"P2R_HIDDEN", L"1"); // the game always renders hidden; the sound stays in the video
     SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
     HANDLE rd, wr;
     CreatePipe(&rd, &wr, &sa, 0);
@@ -685,7 +681,6 @@ static bool StartGame(int w, int h, bool hidden, string& err)
     g_gameProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
     g_sessionW = w;
     g_sessionH = h;
-    g_sessionHidden = hidden;
 
     // Wait for the control block.
     wchar_t name[64];
@@ -700,7 +695,7 @@ static bool StartGame(int w, int h, bool hidden, string& err)
             err = "Portal 2 s'est fermé pendant le démarrage";
             return false;
         }
-        if (hidden) MuteProcessAudio(pid, true);
+        MuteProcessAudio(pid, true); // invisible rendering: never heard, the engine still mixes into the video
         if (!g_ctrl) {
             g_ctrlMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name);
             if (g_ctrlMap) g_ctrl = (P2RControl*)MapViewOfFile(g_ctrlMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(P2RControl));
@@ -766,7 +761,6 @@ static bool RenderItem(int id)
             s.width = stream.width;
             s.height = stream.height;
             s.fps = stream.fps;
-            s.showWindow = false; // a live stream is always rendered hidden
         }
         it->state = ItemState::Loading;
         it->frames = it->encoded = it->renderMs = 0;
@@ -782,8 +776,7 @@ static bool RenderItem(int id)
         }
     };
 
-    bool hidden = !s.showWindow;
-    if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height || g_sessionHidden != hidden))
+    if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height))
         QuitGame(); // new resolution or display mode
     wstring ffmpeg;
     if (s.advanced || stream.active) {
@@ -805,7 +798,7 @@ static bool RenderItem(int id)
             g_status = "Démarrage de Portal 2…";
         }
         string err;
-        if (!StartGame(s.width, s.height, hidden, err)) {
+        if (!StartGame(s.width, s.height, err)) {
             if (GameAlive()) {
                 MuteProcessAudio(g_gamePid, false); // don't leave the game silent for its next launch
                 TerminateProcess(g_gameProc, 1);
@@ -847,7 +840,7 @@ static bool RenderItem(int id)
     job.fps = s.fps;
     job.codec = s.codec == "hevc" ? P2R_HEVC : P2R_H264;
     job.bitrate_kbps = Bitrate(s);
-    job.show_window = s.showWindow;
+    job.show_window = 0; // never present while rendering: faster
     if (stream.active) {
         job.use_ffmpeg = 1;
         job.stream = 1;
@@ -869,7 +862,7 @@ static bool RenderItem(int id)
     DWORD lastMute = 0;
     for (;;) {
         Sleep(100);
-        if (hidden && GetTickCount() - lastMute > 1000) {
+        if (GetTickCount() - lastMute > 1000) {
             MuteProcessAudio(g_gamePid, true);
             lastMute = GetTickCount();
         }
@@ -1058,7 +1051,7 @@ static string StateJson()
     j += "\"game\":{\"path\":" + Q(game) + ",\"found\":" + (game.empty() ? "false" : "true") + ",\"state\":" + Q(g_gameState) + "},";
     j += "\"settings\":{\"width\":" + std::to_string(s.width) + ",\"height\":" + std::to_string(s.height) +
          ",\"fps\":" + std::to_string(s.fps) + ",\"codec\":" + Q(s.codec) + ",\"quality\":" + Q(s.quality) +
-         ",\"outDir\":" + Q(s.outDir) + ",\"gameDir\":" + Q(s.gameDir) + ",\"showWindow\":" + (s.showWindow ? "true" : "false") +
+         ",\"outDir\":" + Q(s.outDir) + ",\"gameDir\":" + Q(s.gameDir) +
          ",\"closeGame\":" + (s.closeGame ? "true" : "false") + ",\"bitrate\":" + std::to_string(Bitrate(s)) +
          ",\"advanced\":" + (s.advanced ? "true" : "false") + ",\"ffmpegPath\":" + Q(s.ffmpegPath) + ",\"container\":" + Q(s.container) +
          ",\"ffVideo\":" + Q(s.ffVideo) + ",\"ffAudio\":" + Q(s.ffAudio) + ",\"ffUi\":" + Q(s.ffUi) + "},";
@@ -1130,7 +1123,6 @@ static string Handle(const Request& r, int& code, const char*& type)
         string v;
         if (JsonRaw(b, "outDir", v) && !v.empty()) s.outDir = Widen(v);
         if (JsonRaw(b, "gameDir", v)) s.gameDir = Widen(v);
-        s.showWindow = JsonBool(b, "showWindow", s.showWindow);
         s.closeGame = JsonBool(b, "closeGame", s.closeGame);
         s.advanced = JsonBool(b, "advanced", s.advanced);
         string c = JsonStr(b, "container", s.container);

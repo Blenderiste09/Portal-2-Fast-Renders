@@ -228,11 +228,6 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
           <div class="row"><div class="path" id="outDir"></div><button class="btn" id="outBtn">Changer</button><button class="btn icon-btn" id="outOpen" title="Ouvrir le dossier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button></div>
         </div>
         <div class="sep"></div>
-        <div class="field">
-          <span class="label">Pendant le rendu</span>
-          <div class="seg" id="display"><button data-v="hidden">Jeu invisible</button><button data-v="preview">Aperçu en direct</button></div>
-          <div class="hint" id="displayHint"></div>
-        </div>
         <div class="toggle" id="tClose"><span>Fermer Portal 2 à la fin<small>Sinon le jeu reste ouvert pour les rendus suivants</small></span><div class="switch"></div></div>
         <div class="sep"></div>
         <div class="field">
@@ -348,8 +343,6 @@ function render() {
   $('outDir').textContent = st.outDir; $('outDir').title = st.outDir;
   $('gameDir').textContent = g.path || 'introuvable : choisis le dossier'; $('gameDir').title = g.path;
   setSwitch('tClose', st.closeGame);
-  setSeg('display', st.showWindow ? 'preview' : 'hidden');
-  $('displayHint').textContent = st.showWindow ? 'La fenêtre du jeu reste visible : plus lent.' : 'Portal 2 tourne en arrière-plan sans fenêtre ni son : le plus rapide.';
   setSeg('mode', st.advanced ? 'advanced' : 'simple');
   $('simplePanel').style.display = st.advanced ? 'none' : '';
   $('advPanel').style.display = st.advanced ? '' : 'none';
@@ -378,7 +371,6 @@ for (const id of ['w', 'h']) {
   $(id).addEventListener('focus', () => editing = true);
   $(id).addEventListener('change', () => { editing = false; save({ width: +$('w').value, height: +$('h').value }); });
 }
-$('display').addEventListener('click', e => { const v = e.target.dataset.v; if (v) save({ showWindow: v === 'preview' }); });
 $('mode').addEventListener('click', e => { const v = e.target.dataset.v; if (v) save({ advanced: v === 'advanced' }); });
 
 // ---- Advanced mode (ffmpeg) -----------------------------------------------------------------
