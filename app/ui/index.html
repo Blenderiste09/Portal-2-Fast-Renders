@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P2Render</title>
+<link rel="icon" href="icon.svg">
+<style>
+:root {
+  --bg: #0e1116;
+  --bg2: #141922;
+  --card: #181e28;
+  --card2: #1e2632;
+  --line: #2a3442;
+  --text: #e8edf4;
+  --muted: #8d99ab;
+  --blue: #3d9bff;
+  --blue2: #1f6fd1;
+  --orange: #ff8a2a;
+  --green: #35c27a;
+  --red: #ff5d5d;
+  --yellow: #f2c94c;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: radial-gradient(1200px 500px at 10% -10%, #17304d 0%, transparent 60%),
+              radial-gradient(900px 400px at 110% 0%, #3a2414 0%, transparent 55%), var(--bg);
+  color: var(--text);
+  font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  display: flex; flex-direction: column;
+  user-select: none;
+}
+button { font: inherit; color: inherit; }
+.app { flex: 1; display: flex; flex-direction: column; max-width: 1280px; width: 100%; margin: 0 auto; padding: 22px 26px 0; min-height: 0; }
+
+header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.logo { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  background: conic-gradient(from 200deg, var(--blue), #7fc3ff, var(--orange), #ffb36b, var(--blue)); box-shadow: 0 6px 24px #3d9bff33; }
+.logo div { width: 26px; height: 26px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; }
+.logo div::after { content: ""; width: 10px; height: 14px; border-radius: 50%; border: 3px solid var(--text); }
+h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+.sub { color: var(--muted); font-size: 13px; }
+.spacer { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.dot.busy { background: var(--orange); box-shadow: 0 0 10px var(--orange); animation: pulse 1.2s infinite; }
+.dot.bad { background: var(--red); }
+@keyframes pulse { 50% { opacity: .35; } }
+
+main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; min-height: 0; }
+.card { background: linear-gradient(180deg, var(--card), var(--bg2)); border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0; }
+.card-h { display: flex; align-items: center; gap: 10px; padding: 16px 18px 12px; }
+.card-h h2 { font-size: 15px; margin: 0; }
+.count { color: var(--muted); font-size: 12.5px; background: var(--card2); border-radius: 999px; padding: 1px 9px; }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card2); cursor: pointer; transition: .15s; white-space: nowrap; }
+.btn:hover { border-color: #3c4a5e; background: #243041; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--text); background: var(--card2); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn svg { width: 16px; height: 16px; }
+.icon-btn { width: 32px; height: 32px; padding: 0; justify-content: center; }
+
+.queue { flex: 1; overflow: auto; padding: 4px 12px 14px; min-height: 0; }
+.drop { margin: 6px 6px 10px; border: 2px dashed var(--line); border-radius: 12px; padding: 36px 20px; text-align: center; color: var(--muted); cursor: pointer; transition: .15s; }
+.drop:hover, .drop.over { border-color: var(--blue); color: var(--text); background: #3d9bff10; }
+.drop big { display: block; font-size: 16px; color: var(--text); margin: 10px 0 4px; }
+.drop svg { width: 38px; height: 38px; color: var(--blue); }
+.queue.over { outline: 2px dashed var(--blue); outline-offset: -6px; border-radius: 12px; }
+
+.item { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; margin: 6px; border-radius: 12px; background: var(--card2); border: 1px solid transparent; }
+.item.active { border-color: #3d9bff66; background: linear-gradient(90deg, #1d2f47, var(--card2)); }
+.thumb { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: #0f141b; color: var(--blue); }
+.thumb svg { width: 20px; height: 20px; }
+.item.done .thumb { color: var(--green); }
+.item.failed .thumb { color: var(--red); }
+.name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta.err { color: #ff9a9a; white-space: normal; }
+.bar { height: 6px; border-radius: 99px; background: #0f141b; margin-top: 8px; overflow: hidden; }
+.bar > div { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--blue), #8cc8ff); transition: width .3s; }
+.bar.enc > div { background: linear-gradient(90deg, var(--orange), #ffc08a); }
+.bar.indet > div { width: 30% !important; animation: indet 1.2s infinite ease-in-out; }
+@keyframes indet { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+.chip { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: #0f141b; color: var(--muted); }
+.chip.recording { color: var(--blue); } .chip.loading { color: var(--yellow); } .chip.encoding { color: var(--orange); }
+.chip.done { color: var(--green); } .chip.failed { color: var(--red); }
+.actions { display: flex; align-items: center; gap: 4px; }
+
+.settings { padding: 4px 18px 18px; overflow: auto; }
+.field { margin: 14px 0; }
+.label { display: block; color: var(--muted); font-size: 12.5px; margin-bottom: 7px; }
+select, input[type=number], input[type=text] { width: 100%; background: #0f141b; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; }
+select:focus, input:focus { border-color: var(--blue); }
+.seg { display: flex; background: #0f141b; border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg button { flex: 1; border: 0; background: transparent; padding: 7px 6px; border-radius: 8px; cursor: pointer; color: var(--muted); }
+.seg button.on { background: var(--card2); color: var(--text); box-shadow: 0 1px 0 #ffffff10 inset, 0 2px 8px #0006; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.path { flex: 1; min-width: 0; background: #0f141b; border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; cursor: pointer; }
+.toggle span small { display: block; color: var(--muted); font-size: 12px; }
+.switch { width: 40px; height: 22px; border-radius: 99px; background: #2b3545; position: relative; flex: none; transition: .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #c7d0dc; transition: .15s; }
+.switch.on { background: var(--blue2); } .switch.on::after { left: 21px; background: #fff; }
+.sep { height: 1px; background: var(--line); margin: 8px 0; }
+
+footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 16px; padding: 16px 26px 20px; max-width: 1280px; width: 100%; margin: 0 auto; }
+.status { flex: 1; color: var(--muted); }
+.status b { color: var(--text); font-weight: 600; }
+.go { padding: 12px 26px; border-radius: 12px; border: 0; cursor: pointer; font-weight: 600; font-size: 15px; color: #fff;
+  background: linear-gradient(135deg, var(--blue), var(--blue2)); box-shadow: 0 8px 24px #1f6fd155; transition: .15s; }
+.go:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.go:disabled { filter: grayscale(.7) brightness(.7); cursor: default; transform: none; box-shadow: none; }
+.go.stop { background: linear-gradient(135deg, #ff6b5b, #d33f3f); box-shadow: 0 8px 24px #d33f3f44; }
+.toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: #2a1818; border: 1px solid #5c2b2b; color: #ffc4c4; padding: 10px 16px; border-radius: 10px; display: none; }
+::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: #2a3442; border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo"><div></div></div>
+    <div>
+      <h1>P2Render</h1>
+      <div class="sub">Rendu ultra-rapide de démos Portal 2, encodé sur la carte graphique</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="pill" id="gamePill"><span class="dot" id="gameDot"></span><span id="gameText">Recherche de Portal 2…</span></div>
+  </header>
+
+  <main>
+    <section class="card" id="queueCard">
+      <div class="card-h">
+        <h2>Démos</h2><span class="count" id="count">0</span>
+        <div class="spacer"></div>
+        <button class="btn ghost" id="clearBtn" title="Retirer les démos terminées">Vider les terminées</button>
+        <button class="btn" id="addBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter des démos</button>
+      </div>
+      <div class="queue" id="queue"></div>
+    </section>
+
+    <aside class="card">
+      <div class="card-h"><h2>Réglages</h2></div>
+      <div class="settings">
+        <div class="field">
+          <span class="label">Résolution</span>
+          <select id="res">
+            <option value="1280x720">1280 × 720 (720p)</option>
+            <option value="1600x900">1600 × 900</option>
+            <option value="1920x1080">1920 × 1080 (1080p)</option>
+            <option value="2560x1440">2560 × 1440 (1440p)</option>
+            <option value="3840x2160">3840 × 2160 (4K)</option>
+            <option value="custom">Personnalisée…</option>
+          </select>
+          <div class="row" id="customRes" style="margin-top:8px;display:none">
+            <input type="number" id="w" min="320" max="7680"> <span style="color:var(--muted)">×</span> <input type="number" id="h" min="240" max="4320">
+          </div>
+          <div class="hint">La fenêtre du jeu ne peut pas dépasser la taille de ton écran.</div>
+        </div>
+        <div class="field">
+          <span class="label">Images par seconde</span>
+          <div class="seg" id="fps"><button data-v="30">30</button><button data-v="60">60</button><button data-v="120">120</button></div>
+        </div>
+        <div class="field">
+          <span class="label">Format vidéo</span>
+          <div class="seg" id="codec"><button data-v="h264">H.264</button><button data-v="hevc">HEVC (H.265)</button></div>
+        </div>
+        <div class="field">
+          <span class="label">Qualité</span>
+          <div class="seg" id="quality"><button data-v="standard">Standard</button><button data-v="high">Haute</button><button data-v="max">Maximale</button></div>
+          <div class="hint" id="bitrate"></div>
+        </div>
+        <div class="field">
+          <span class="label">Dossier des vidéos</span>
+          <div class="row"><div class="path" id="outDir"></div><button class="btn" id="outBtn">Changer</button><button class="btn icon-btn" id="outOpen" title="Ouvrir le dossier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button></div>
+        </div>
+        <div class="sep"></div>
+        <div class="toggle" id="tShow"><span>Afficher le rendu en direct<small>Plus lent : la fenêtre du jeu est rafraîchie</small></span><div class="switch"></div></div>
+        <div class="toggle" id="tClose"><span>Fermer Portal 2 à la fin<small>Sinon le jeu reste ouvert pour les rendus suivants</small></span><div class="switch"></div></div>
+        <div class="sep"></div>
+        <div class="field">
+          <span class="label">Dossier de Portal 2</span>
+          <div class="row"><div class="path" id="gameDir"></div><button class="btn" id="gameBtn">Changer</button></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<footer>
+  <div class="status" id="status">Prêt</div>
+  <button class="go" id="goBtn">Lancer le rendu</button>
+</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+const token = new URLSearchParams(location.search).get('t') || '';
+const $ = id => document.getElementById(id);
+let S = null, editing = false;
+
+async function api(path, body, raw) {
+  const opt = { method: body === undefined ? 'GET' : 'POST', headers: { 'X-Token': token } };
+  if (body !== undefined) opt.body = raw ? body : JSON.stringify(body);
+  const r = await fetch('/api/' + path, opt);
+  return r.json();
+}
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 5000); }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function dur(sec) { if (!(sec > 0)) return '—'; sec = Math.round(sec); const m = Math.floor(sec / 60), s = sec % 60; return m ? `${m} min ${String(s).padStart(2, '0')} s` : `${s} s`; }
+
+const ICON = {
+  film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>',
+  ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  err: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg>',
+  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>',
+};
+const STATE_TXT = { pending: 'En attente', loading: 'Chargement', recording: 'Rendu', encoding: 'Finalisation', done: 'Terminé', failed: 'Erreur', cancelled: 'Annulé' };
+
+function itemHtml(it) {
+  const active = ['loading', 'recording', 'encoding'].includes(it.state);
+  const cls = it.state === 'done' ? 'done' : it.state === 'failed' ? 'failed' : '';
+  let meta = `${esc(it.map || 'carte inconnue')} · ${dur(it.seconds)}`, bar = '';
+  if (it.state === 'recording' || it.state === 'encoding') {
+    const pct = it.expected ? Math.min(100, 100 * it.frames / it.expected) : 0;
+    const fps = it.renderMs > 0 ? it.frames * 1000 / it.renderMs : 0;
+    if (it.state === 'recording') {
+      const left = fps > 0 && it.expected ? Math.max(0, (it.expected - it.frames) / fps) : 0;
+      meta = `${it.frames} / ${it.expected || '?'} images · ${fps.toFixed(0)} images/s · reste ${dur(left)}`;
+      bar = `<div class="bar"><div style="width:${pct}%"></div></div>`;
+    } else {
+      meta = `Finalisation de la vidéo et du son… (${it.encoded} / ${it.frames} images encodées)`;
+      bar = `<div class="bar enc indet"><div></div></div>`;
+    }
+  } else if (it.state === 'loading') {
+    meta = 'Chargement de la démo dans Portal 2…'; bar = '<div class="bar indet"><div></div></div>';
+  } else if (it.state === 'done') {
+    const fps = it.renderMs > 0 ? (it.frames * 1000 / it.renderMs).toFixed(0) : '?';
+    meta = `${dur(it.seconds)} de vidéo rendue en ${dur(it.renderMs / 1000)} · ${fps} images/s`;
+  } else if (it.state === 'failed') {
+    meta = `<span class="err">${esc(it.message || 'échec')}</span>`;
+  }
+  let acts = '';
+  if (it.state === 'done') acts += `<button class="btn icon-btn" title="Lire la vidéo" data-act="play" data-id="${it.id}">${ICON.play}</button><button class="btn icon-btn" title="Afficher dans le dossier" data-act="folder" data-id="${it.id}">${ICON.folder}</button>`;
+  if (['failed', 'cancelled', 'done'].includes(it.state) && !S.running) acts += `<button class="btn icon-btn ghost" title="Recommencer" data-act="retry" data-id="${it.id}">${ICON.retry}</button>`;
+  if (!active) acts += `<button class="btn icon-btn ghost" title="Retirer" data-act="remove" data-id="${it.id}">${ICON.x}</button>`;
+  return `<div class="item ${active ? 'active' : ''} ${cls}">
+    <div class="thumb">${it.state === 'done' ? ICON.ok : it.state === 'failed' ? ICON.err : ICON.film}</div>
+    <div style="min-width:0"><div class="name" title="${esc(it.path)}">${esc(it.file)}</div><div class="meta ${it.state === 'failed' ? 'err' : ''}">${meta}</div>${bar}</div>
+    <div class="actions"><span class="chip ${it.state}">${STATE_TXT[it.state] || it.state}</span>${acts}</div></div>`;
+}
+
+function setSeg(id, v) { for (const b of $(id).children) b.classList.toggle('on', b.dataset.v == v); }
+function setSwitch(id, on) { $(id).querySelector('.switch').classList.toggle('on', !!on); }
+
+function render() {
+  if (!S) return;
+  const g = S.game, st = S.settings;
+  const dot = $('gameDot');
+  dot.className = 'dot ' + (!g.found ? 'bad' : g.state === 'busy' || g.state === 'starting' ? 'busy' : 'ok');
+  $('gameText').textContent = !g.found ? 'Portal 2 introuvable' : g.state === 'starting' ? 'Démarrage de Portal 2…' : g.state === 'busy' ? 'Portal 2 en cours de rendu' : g.state === 'ready' ? 'Portal 2 ouvert' : 'Portal 2 détecté';
+
+  const items = S.items;
+  $('count').textContent = items.length;
+  const q = $('queue');
+  const html = (items.length ? items.map(itemHtml).join('') : '') +
+    `<div class="drop" id="drop" ${items.length ? 'style="padding:18px"' : ''}>${items.length ? '' : ICON.upload}<big>${items.length ? '' : 'Glisse tes démos ici'}</big>${items.length ? '+ Ajouter d’autres démos (ou glisse-les ici)' : 'ou clique pour choisir des fichiers .dem'}</div>`;
+  if (q._html !== html) { q.innerHTML = html; q._html = html; }
+
+  if (!editing) {
+    const r = `${st.width}x${st.height}`;
+    const known = [...$('res').options].some(o => o.value === r);
+    $('res').value = known ? r : 'custom';
+    $('customRes').style.display = known ? 'none' : 'flex';
+    $('w').value = st.width; $('h').value = st.height;
+  }
+  setSeg('fps', st.fps); setSeg('codec', st.codec); setSeg('quality', st.quality);
+  $('bitrate').textContent = `≈ ${(st.bitrate / 1000).toFixed(0)} Mbit/s · encodage matériel de la carte graphique`;
+  $('outDir').textContent = st.outDir; $('outDir').title = st.outDir;
+  $('gameDir').textContent = g.path || 'introuvable : choisis le dossier'; $('gameDir').title = g.path;
+  setSwitch('tShow', st.showWindow); setSwitch('tClose', st.closeGame);
+
+  const pending = items.filter(i => i.state === 'pending').length;
+  const go = $('goBtn');
+  if (S.running) { go.textContent = 'Annuler'; go.className = 'go stop'; go.disabled = false; }
+  else { go.textContent = pending ? `Lancer le rendu (${pending} démo${pending > 1 ? 's' : ''})` : 'Lancer le rendu'; go.className = 'go'; go.disabled = !pending || !g.found; }
+  const cur = items.find(i => ['loading', 'recording', 'encoding'].includes(i.state));
+  $('status').innerHTML = S.running && cur ? `<b>${esc(cur.file)}</b> · ${esc(STATE_TXT[cur.state])}` : esc(S.status);
+  for (const b of document.querySelectorAll('aside select, aside input, aside .seg button, #outBtn, #gameBtn')) b.disabled = S.running;
+}
+
+async function refresh() { try { S = await api('state'); render(); } catch (e) { $('status').textContent = 'P2Render ne répond plus.'; } }
+async function save(patch) { if (!S || S.running) return; Object.assign(S.settings, patch); render(); await api('settings', S.settings); refresh(); }
+
+for (const id of ['fps', 'codec', 'quality'])
+  $(id).addEventListener('click', e => { const v = e.target.dataset.v; if (v) save({ [id]: id === 'fps' ? +v : v }); });
+$('res').addEventListener('change', e => {
+  const v = e.target.value;
+  if (v === 'custom') { $('customRes').style.display = 'flex'; return; }
+  const [w, h] = v.split('x').map(Number); save({ width: w, height: h });
+});
+for (const id of ['w', 'h']) {
+  $(id).addEventListener('focus', () => editing = true);
+  $(id).addEventListener('change', () => { editing = false; save({ width: +$('w').value, height: +$('h').value }); });
+}
+$('tShow').onclick = () => save({ showWindow: !S.settings.showWindow });
+$('tClose').onclick = () => save({ closeGame: !S.settings.closeGame });
+$('outBtn').onclick = async () => { await api('browse-out', {}); refresh(); };
+$('outOpen').onclick = () => api('open', { id: 0 });
+$('gameBtn').onclick = async () => { const r = await api('browse-game', {}); if (r.error) toast(r.error); refresh(); };
+$('addBtn').onclick = async () => { await api('add-dialog', {}); refresh(); };
+$('clearBtn').onclick = async () => { await api('clear', {}); refresh(); };
+$('goBtn').onclick = async () => { await api(S.running ? 'cancel' : 'start', {}); refresh(); };
+$('queue').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]');
+  if (b) {
+    const id = +b.dataset.id, act = b.dataset.act;
+    if (act === 'play') await api('open', { id });
+    else if (act === 'folder') await api('open', { id, folder: true });
+    else await api(act, { id });
+    return refresh();
+  }
+  if (e.target.closest('#drop') && !S.running) { await api('add-dialog', {}); refresh(); }
+});
+
+// Drag and drop of .dem files: their content is sent to P2Render (the page cannot see paths).
+const qc = $('queueCard');
+['dragenter', 'dragover'].forEach(ev => qc.addEventListener(ev, e => { e.preventDefault(); $('queue').classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => qc.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || !qc.contains(e.relatedTarget)) $('queue').classList.remove('over'); }));
+qc.addEventListener('drop', async e => {
+  const files = [...e.dataTransfer.files].filter(f => /\.dem$/i.test(f.name));
+  if (!files.length) return toast('Seuls les fichiers .dem peuvent être ajoutés.');
+  for (const f of files) await fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', headers: { 'X-Token': token }, body: f });
+  refresh();
+});
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+refresh();
+setInterval(refresh, 500);
+</script>
+</body>
+</html>

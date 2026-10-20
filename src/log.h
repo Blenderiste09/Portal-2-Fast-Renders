@@ -1,8 +1,8 @@
-// Tiny thread-safe logger: <Portal 2>\d3d9ex.log (next to portal2.exe).
+// Tiny thread-safe logger: p2r_core.log next to the given module (the P2Render folder).
 #pragma once
 
 namespace xlog {
-void Init();
+void Init(void* module);
 void Write(const char* fmt, ...);
 }
 

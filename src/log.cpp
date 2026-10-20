@@ -10,14 +10,14 @@ static HANDLE g_file = INVALID_HANDLE_VALUE;
 static CRITICAL_SECTION g_lock;
 static DWORD g_start;
 
-void Init()
+void Init(void* module)
 {
     InitializeCriticalSection(&g_lock);
     g_start = GetTickCount();
     char path[MAX_PATH];
-    DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
+    DWORD n = GetModuleFileNameA((HMODULE)module, path, MAX_PATH);
     while (n > 0 && path[n - 1] != '\\') --n;
-    strcpy_s(path + n, MAX_PATH - n, "d3d9ex.log");
+    strcpy_s(path + n, MAX_PATH - n, "p2r_core.log");
     g_file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
                          FILE_ATTRIBUTE_NORMAL, nullptr);
 }

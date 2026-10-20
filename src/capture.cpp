@@ -1,10 +1,12 @@
 #include "capture.h"
 
 #include <d3d9.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "control.h"
 #include "d3d9ex.h"
 #include "engine.h"
 #include "log.h"
@@ -12,21 +14,14 @@
 
 namespace capture {
 
-struct Options {
-    char name[128];
-    char demo[260];
-    int fps = 60;
-    P2RCodec codec = P2R_H264;
-    int bitrateKbps = 0;   // 0 = from the resolution
-    bool window = true;    // present to the window while rendering
-};
-
 enum class State { Idle, Arming, Recording, Finishing };
 
 struct Session {
     State state = State::Idle;
-    Options opt;
+    P2RJob job = {};
+    int jobId = 0;
     int armFrames = 0;
+    bool cancelled = false;
 
     // Saved cvars, restored at the end.
     char queueMode[32], hostFramerate[32], fpsMax[32];
@@ -51,12 +46,40 @@ struct Session {
     int readyFrames = 0;
     int notPlayingFrames = 0;
     DWORD startTick = 0;
-    wchar_t outPath[MAX_PATH], wavPath[MAX_PATH];
+    wchar_t wavPath[MAX_PATH];
 };
 
 static HMODULE g_self;
 static Session g_s;
-static unsigned g_counter; // sessions started in this process
+static unsigned g_counter;   // sessions started in this process
+
+// Control block shared with P2Render.exe.
+static HANDLE g_ctrlMap;
+static P2RControl* g_ctrl;
+static int g_lastSeq;
+
+// ---------------------------------------------------------------------------------------------
+// Reporting to the app
+
+static void SetJob(P2RJobState st, const char* fmt = nullptr, ...)
+{
+    if (!g_ctrl) return;
+    if (fmt) {
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(g_ctrl->job_message, sizeof(g_ctrl->job_message), fmt, ap);
+        va_end(ap);
+        LOG("job %d: %s", g_s.jobId, g_ctrl->job_message);
+    }
+    g_ctrl->job_state = st;
+}
+
+static void SetCore(P2RCoreState st, const char* msg)
+{
+    if (!g_ctrl) return;
+    strcpy_s(g_ctrl->core_message, msg);
+    g_ctrl->core_state = st;
+}
 
 // ---------------------------------------------------------------------------------------------
 
@@ -100,7 +123,6 @@ static bool EncoderAlive(Session& s)
 // are published (end of the movie).
 static void PublishFrames(Session& s, bool wait)
 {
-    IDirect3DDevice9Ex* dev = d3d9ex::Device();
     while (s.pendingCount > 0) {
         int slot = s.pendingFirst % P2R_SLOTS;
         HRESULT hr = s.query[slot]->GetData(nullptr, 0, D3DGETDATA_FLUSH);
@@ -109,15 +131,12 @@ static void PublishFrames(Session& s, bool wait)
             YieldProcessor();
             continue;
         }
-        if (hr != S_OK && hr != D3DERR_DEVICELOST) LOG("event query GetData 0x%08lx", hr);
+        if (hr != S_OK) LOG("event query GetData 0x%08lx", hr);
         ReleaseSemaphore(s.semReady, 1, nullptr);
         ++s.pendingFirst;
         --s.pendingCount;
     }
-    (void)dev;
 }
-
-static void Fail(Session& s, const char* why);
 
 static bool CreateGpu(Session& s)
 {
@@ -143,6 +162,10 @@ static bool CreateGpu(Session& s)
         s.shm->slot_handles[i] = (uint64_t)(uintptr_t)h;
     }
     s.gpuReady = true;
+    if (g_ctrl) {
+        g_ctrl->width = s.width;
+        g_ctrl->height = s.height;
+    }
     LOG("shared ring: %d x %ux%u A8R8G8B8 (back buffer fmt %d, ms %d)", P2R_SLOTS, s.width, s.height, d.Format, d.MultiSampleType);
     return true;
 }
@@ -154,18 +177,18 @@ static bool StartEncoder(Session& s)
     m->version = P2R_VERSION;
     m->width = s.width;
     m->height = s.height;
-    m->fps = s.opt.fps;
-    m->codec = s.opt.codec;
-    int kbps = s.opt.bitrateKbps;
+    m->fps = s.job.fps;
+    m->codec = s.job.codec;
+    int kbps = s.job.bitrate_kbps;
     if (kbps <= 0) {
-        // ~0.33 bits per pixel at 60 fps: 1080p60 -> 40 Mbit/s.
-        double px = (double)s.width * s.height * s.opt.fps;
+        // ~0.33 bits per pixel: 1080p60 -> 41 Mbit/s.
+        double px = (double)s.width * s.height * s.job.fps;
         kbps = (int)(px * 0.33 / 1000.0);
         if (kbps < 8000) kbps = 8000;
     }
     m->bitrate_kbps = kbps;
     m->num_slots = P2R_SLOTS;
-    wcscpy_s(m->out_path, s.outPath);
+    wcscpy_s(m->out_path, s.job.out_path);
     wcscpy_s(m->wav_path, s.wavPath);
 
     wchar_t exe[MAX_PATH];
@@ -189,19 +212,28 @@ static bool StartEncoder(Session& s)
         LOG("encoder did not start (wait %lu, state %d): %s", w, m->enc_state, m->error);
         return false;
     }
-    LOG("encoder started: %ux%u %d fps codec %u %d kbit/s", s.width, s.height, s.opt.fps, m->codec, kbps);
+    LOG("encoder started: %ux%u %d fps codec %u %d kbit/s", s.width, s.height, s.job.fps, m->codec, kbps);
     return true;
+}
+
+static void EndJob(Session& s)
+{
+    ReleaseGpu(s);
+    CloseIpc(s);
+    s.state = State::Idle;
+    if (g_ctrl) g_ctrl->core_state = CORE_READY;
 }
 
 static void Fail(Session& s, const char* why)
 {
-    engine::Warn("render aborted: %s", why);
     if (s.state == State::Recording) engine::Run("endmovie");
     if (s.state != State::Idle) RestoreCvars(s);
     if (s.process && EncoderAlive(s)) TerminateProcess(s.process, 1);
-    ReleaseGpu(s);
-    CloseIpc(s);
-    s.state = State::Idle;
+    if (s.state == State::Idle) return;
+    engine::Run("disconnect");
+    DeleteFileW(s.wavPath);
+    SetJob(JOB_FAILED, "%s", why);
+    EndJob(s);
 }
 
 // Replaces CVideoMode::WriteMovieFrame while we render (main thread, before Present).
@@ -212,18 +244,23 @@ static bool OnMovieFrame()
     if (s.state != State::Recording) return true; // finishing: drop the last engine frames
 
     if (!s.gpuReady) {
-        if (!CreateGpu(s) || !StartEncoder(s)) {
-            Fail(s, s.gpuReady ? "the encoder did not start (see d3d9ex.log / p2r_encoder.log)" : "cannot create the shared textures");
+        if (!CreateGpu(s)) {
+            Fail(s, "impossible de créer les textures partagées");
+            return true;
+        }
+        if (!StartEncoder(s)) {
+            Fail(s, s.shm && s.shm->error[0] ? s.shm->error : "l'encodeur n'a pas démarré");
             return true;
         }
         s.startTick = GetTickCount();
+        SetJob(JOB_RECORDING);
     }
 
     PublishFrames(s, false);
     // Wait for a free slot: back-pressure when the encoder is slower than the game.
     HANDLE waits[2] = {s.semFree, s.process};
     if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) {
-        Fail(s, "the encoder exited");
+        Fail(s, s.shm->error[0] ? s.shm->error : "l'encodeur s'est arrêté");
         return true;
     }
     IDirect3DDevice9Ex* dev = d3d9ex::Device();
@@ -238,6 +275,10 @@ static bool OnMovieFrame()
     s.query[slot]->Issue(D3DISSUE_END);
     ++s.pendingCount;
     ++s.frames;
+    if (g_ctrl) {
+        g_ctrl->frames = s.frames;
+        g_ctrl->render_ms = GetTickCount() - s.startTick;
+    }
     return true;
 }
 
@@ -245,11 +286,12 @@ static void Finish(Session& s, const char* why)
 {
     engine::Run("endmovie");
     RestoreCvars(s);
+    engine::Run("disconnect");
     if (!s.gpuReady) {
-        engine::Warn("no frame was rendered (%s)", why);
         if (s.process && EncoderAlive(s)) TerminateProcess(s.process, 1);
-        CloseIpc(s);
-        s.state = State::Idle;
+        DeleteFileW(s.wavPath);
+        SetJob(JOB_FAILED, "aucune image rendue (%s)", why);
+        EndJob(s);
         return;
     }
     PublishFrames(s, true);
@@ -257,153 +299,14 @@ static void Finish(Session& s, const char* why)
     s.shm->ended = 1;
     ReleaseSemaphore(s.semReady, 1, nullptr); // wake the encoder even with no pending frame
     DWORD ms = GetTickCount() - s.startTick;
-    double secs = ms / 1000.0;
-    engine::Msg("%s: %d frames (%.1f s of video) rendered in %.1f s = %.0f fps; encoding / muxing continues",
-                why, s.frames, (double)s.frames / s.opt.fps, secs, secs > 0 ? s.frames / secs : 0.0);
+    if (g_ctrl) g_ctrl->render_ms = ms;
+    SetJob(JOB_ENCODING, "%s : %d images en %.1f s (%.0f images/s)", why, s.frames, ms / 1000.0,
+           ms ? s.frames * 1000.0 / ms : 0.0);
     s.state = State::Finishing;
 }
 
-// Main thread, FRAME_START.
-// p2r_after <frames> <command...>: Portal 2 has no "wait" command; this one schedules a console
-// command a number of frames later (unattended tests and recordings).
-struct Scheduled {
-    int frames;
-    char cmd[256];
-};
-static Scheduled g_sched[32];
-static int g_numSched;
-
-static void RunScheduled()
-{
-    for (int i = 0; i < g_numSched;) {
-        if (--g_sched[i].frames <= 0) {
-            char cmd[256];
-            strcpy_s(cmd, g_sched[i].cmd);
-            g_sched[i] = g_sched[--g_numSched];
-            engine::Run(cmd);
-        } else {
-            ++i;
-        }
-    }
-}
-
-static void Cmd_After(const CCommand& args)
-{
-    if (args.ArgC() < 3 || g_numSched >= 32) {
-        engine::Msg("usage: p2r_after <frames> <command...>");
-        return;
-    }
-    Scheduled& e = g_sched[g_numSched++];
-    e.frames = atoi(args.Arg(1));
-    e.cmd[0] = 0;
-    for (int i = 2; i < args.ArgC(); ++i) {
-        if (i > 2) strcat_s(e.cmd, " ");
-        strcat_s(e.cmd, args.Arg(i));
-    }
-}
-
-static void OnFrame()
-{
-    RunScheduled();
-    Session& s = g_s;
-    switch (s.state) {
-    case State::Idle:
-        break;
-    case State::Arming: {
-        // mat_queue_mode 0 is applied at the end of a frame: the device must only be used from the
-        // main thread once the movie starts. With a demo, the movie starts when the demo is in game
-        // (not during its map load), so the video and the engine WAV start on the same frame.
-        ++s.armFrames;
-        char cmd[512];
-        if (s.armFrames == 3 && s.opt.demo[0]) {
-            sprintf_s(cmd, "playdemo \"%s\"", s.opt.demo);
-            engine::Run(cmd);
-            s.armTick = GetTickCount();
-        }
-        bool go = false;
-        if (s.armFrames >= 3) {
-            if (!s.opt.demo[0]) {
-                go = true;
-            } else if (engine::IsPlayingDemo() && engine::IsInGame() && !engine::IsLoading()) {
-                go = ++s.readyFrames >= 2;
-            } else if (GetTickCount() - s.armTick > 120000) {
-                Fail(s, "the demo did not start");
-                break;
-            }
-        }
-        if (go) {
-            sprintf_s(cmd, "startmovie \"p2r_tmp_%s\" wav", s.opt.name);
-            engine::Run(cmd);
-            s.state = State::Recording;
-        }
-        break;
-    }
-    case State::Recording:
-        // With a demo: stop when it is over (not playing for a few frames).
-        if (s.opt.demo[0] && s.frames > 0) {
-            if (engine::IsPlayingDemo()) {
-                s.notPlayingFrames = 0;
-            } else if (++s.notPlayingFrames >= 10) {
-                Finish(s, "demo finished");
-                break;
-            }
-        }
-        if (s.process && s.gpuReady && !EncoderAlive(s)) Fail(s, "the encoder exited");
-        break;
-    case State::Finishing: {
-        int st = s.shm->enc_state;
-        bool alive = EncoderAlive(s);
-        if (st == P2R_ENC_DONE) {
-            engine::Msg("video written: %ls", s.outPath);
-        } else if (st == P2R_ENC_FAILED || !alive) {
-            engine::Warn("encoder failed: %s", s.shm->error[0] ? s.shm->error : "exited");
-        } else {
-            break;
-        }
-        ReleaseGpu(s);
-        CloseIpc(s);
-        s.state = State::Idle;
-        break;
-    }
-    }
-}
-
 // ---------------------------------------------------------------------------------------------
-
-static bool ParseOptions(const CCommand& args, Options& o)
-{
-    if (args.ArgC() < 2) return false;
-    strncpy_s(o.name, args.Arg(1), _TRUNCATE);
-    for (char* c = o.name; *c; ++c)
-        if (strchr("\\/:*?\"<>| ", *c)) *c = '_';
-    for (int i = 2; i < args.ArgC(); ++i) {
-        const char* a = args.Arg(i);
-        // The engine tokenizer splits "key=value" into "key", "=", "value".
-        char key[64] = {}, val[260] = {};
-        const char* eq = strchr(a, '=');
-        if (eq) {
-            strncpy_s(key, a, eq - a);
-            strncpy_s(val, eq + 1, _TRUNCATE);
-        } else {
-            strncpy_s(key, a, _TRUNCATE);
-            if (i + 1 < args.ArgC() && strcmp(args.Arg(i + 1), "=") == 0) {
-                strncpy_s(val, args.Arg(i + 2), _TRUNCATE);
-                i += 2;
-            }
-        }
-        if (!_stricmp(key, "fps")) o.fps = atoi(val);
-        else if (!_stricmp(key, "codec")) o.codec = !_stricmp(val, "hevc") || !_stricmp(val, "h265") ? P2R_HEVC : P2R_H264;
-        else if (!_stricmp(key, "bitrate")) o.bitrateKbps = atoi(val);
-        else if (!_stricmp(key, "window")) o.window = atoi(val) != 0;
-        else if (!_stricmp(key, "demo")) strncpy_s(o.demo, val, _TRUNCATE);
-        else {
-            engine::Warn("unknown option '%s'", key);
-            return false;
-        }
-    }
-    if (o.fps < 1 || o.fps > 1000) o.fps = 60;
-    return true;
-}
+// Jobs from the app
 
 static void Copy(char* dst, size_t n, const char* src) { strncpy_s(dst, n, src ? src : "0", _TRUNCATE); }
 
@@ -426,82 +329,152 @@ static bool OpenIpc(Session& s)
     return s.semReady && s.semFree && s.evStarted;
 }
 
-static void Cmd_Start(const CCommand& args)
+static void StartJob(const P2RJob& job, int jobId)
 {
     Session& s = g_s;
-    if (s.state != State::Idle) {
-        engine::Warn("already rendering (p2r_stop first)");
-        return;
-    }
-    Options o;
-    if (!ParseOptions(args, o)) {
-        engine::Msg("usage: p2r_start <name> [demo=<demo>] [fps=60] [codec=h264|hevc] [bitrate=<kbit/s>] [window=1|0]");
-        engine::Msg("  renders the engine's movie frames (startmovie) to <Portal 2>\\p2r_movies\\<name>.mp4 with the");
-        engine::Msg("  GPU encoder; with demo=, plays the demo and stops at its end, otherwise use p2r_stop.");
-        return;
-    }
-    if (!d3d9ex::Device()) {
-        engine::Warn("the game is not running on D3D9Ex (launched with -nod3d9ex?)");
-        return;
-    }
-    if (!engine::MovieHookReady()) {
-        engine::Warn("the engine movie hook is not installed (see d3d9ex.log)");
-        return;
-    }
     s = Session();
-    s.opt = o;
+    s.job = job;
+    s.jobId = jobId;
+    if (s.job.fps < 1 || s.job.fps > 1000) s.job.fps = 60;
+    g_ctrl->job_id = jobId;
+    g_ctrl->frames = 0;
+    g_ctrl->frames_encoded = 0;
+    g_ctrl->render_ms = 0;
+    g_ctrl->job_message[0] = 0;
+    g_ctrl->core_state = CORE_BUSY;
+    SetJob(JOB_LOADING, "chargement de la démo");
 
-    // Output paths.
-    wchar_t root[MAX_PATH];
-    DWORD n = GetModuleFileNameW(nullptr, root, MAX_PATH);
-    while (n > 0 && root[n - 1] != L'\\') --n;
-    root[n] = 0;
-    swprintf_s(s.outPath, L"%sp2r_movies", root);
-    CreateDirectoryW(s.outPath, nullptr);
-    swprintf_s(s.outPath, L"%sp2r_movies\\%hs.mp4", root, o.name);
-    swprintf_s(s.wavPath, L"%hs\\p2r_tmp_%hs.wav", engine::GameDir(), o.name);
+    swprintf_s(s.wavPath, L"%hs\\p2r_tmp_%d.wav", engine::GameDir(), jobId);
     DeleteFileW(s.wavPath); // startmovie refuses to overwrite it
-
     if (!OpenIpc(s)) {
-        engine::Warn("cannot create the shared memory (%lu)", GetLastError());
         CloseIpc(s);
+        SetJob(JOB_FAILED, "mémoire partagée impossible à créer (%lu)", GetLastError());
+        g_ctrl->core_state = CORE_READY;
         return;
     }
     Copy(s.queueMode, sizeof(s.queueMode), engine::GetCvarString("mat_queue_mode"));
     Copy(s.hostFramerate, sizeof(s.hostFramerate), engine::GetCvarString("host_framerate"));
     Copy(s.fpsMax, sizeof(s.fpsMax), engine::GetCvarString("fps_max"));
     char cmd[256];
-    sprintf_s(cmd, "mat_queue_mode 0; fps_max 0; host_framerate %d", o.fps);
+    sprintf_s(cmd, "mat_queue_mode 0; fps_max 0; host_framerate %d", s.job.fps);
     engine::Run(cmd);
     s.state = State::Arming;
-    engine::Msg("rendering to %ls (%d fps%s)", s.outPath, o.fps, o.window ? "" : ", window not updated");
+    LOG("job %d: %s -> %ls (%d fps, codec %d, %d kbit/s, window %d)", jobId, job.demo, job.out_path, job.fps,
+        job.codec, job.bitrate_kbps, job.show_window);
 }
 
-static void Cmd_Stop(const CCommand&)
+static void PollCommands()
 {
-    Session& s = g_s;
-    if (s.state == State::Recording) Finish(s, "stopped");
-    else if (s.state == State::Arming) Fail(s, "stopped before the first frame");
-    else engine::Msg("not rendering");
+    if (!g_ctrl || g_ctrl->cmd_seq == g_lastSeq) return;
+    int seq = g_ctrl->cmd_seq;
+    MemoryBarrier();
+    P2RCommand cmd = (P2RCommand)g_ctrl->cmd;
+    P2RJob job = g_ctrl->job;
+    g_lastSeq = seq;
+    g_ctrl->ack_seq = seq;
+    switch (cmd) {
+    case CMD_RENDER:
+        if (g_s.state != State::Idle) LOG("render command ignored: busy");
+        else StartJob(job, seq);
+        break;
+    case CMD_CANCEL:
+        if (g_s.state == State::Arming || g_s.state == State::Recording) {
+            g_s.cancelled = true;
+            Fail(g_s, "annulé");
+        }
+        break;
+    case CMD_QUIT:
+        if (g_s.state != State::Idle) Fail(g_s, "annulé");
+        engine::Run("quit");
+        break;
+    default:
+        break;
+    }
 }
+
+// Main thread, FRAME_START.
+static void OnFrame()
+{
+    PollCommands();
+    Session& s = g_s;
+    switch (s.state) {
+    case State::Idle:
+        break;
+    case State::Arming: {
+        // mat_queue_mode 0 is applied at the end of a frame: the device must only be used from the
+        // main thread once the movie starts. The movie starts when the demo is in game (not during
+        // its map load), so the video and the engine WAV start on the same frame.
+        ++s.armFrames;
+        char cmd[512];
+        if (s.armFrames == 3) {
+            sprintf_s(cmd, "playdemo \"%s\"", s.job.demo);
+            engine::Run(cmd);
+            s.armTick = GetTickCount();
+        }
+        if (s.armFrames >= 3) {
+            if (engine::IsPlayingDemo() && engine::IsInGame() && !engine::IsLoading()) {
+                if (++s.readyFrames >= 2) {
+                    sprintf_s(cmd, "startmovie \"p2r_tmp_%d\" wav", s.jobId);
+                    engine::Run(cmd);
+                    s.state = State::Recording;
+                }
+            } else if (GetTickCount() - s.armTick > 120000) {
+                Fail(s, "la démo n'a pas démarré (démo incompatible avec cette version du jeu ?)");
+            }
+        }
+        break;
+    }
+    case State::Recording:
+        // Stop when the demo is over (not playing for a few frames).
+        if (s.frames > 0) {
+            if (engine::IsPlayingDemo()) {
+                s.notPlayingFrames = 0;
+            } else if (++s.notPlayingFrames >= 10) {
+                Finish(s, "démo terminée");
+                break;
+            }
+        }
+        if (s.process && s.gpuReady && !EncoderAlive(s)) Fail(s, s.shm->error[0] ? s.shm->error : "l'encodeur s'est arrêté");
+        break;
+    case State::Finishing: {
+        int st = s.shm->enc_state;
+        if (g_ctrl) g_ctrl->frames_encoded = s.shm->frames_encoded;
+        bool alive = EncoderAlive(s);
+        if (st == P2R_ENC_DONE) {
+            SetJob(JOB_DONE, "vidéo écrite : %ls", s.job.out_path);
+        } else if (st == P2R_ENC_FAILED || !alive) {
+            SetJob(JOB_FAILED, "encodeur : %s", s.shm->error[0] ? s.shm->error : "arrêté");
+        } else {
+            break;
+        }
+        EndJob(s);
+        break;
+    }
+    }
+    if (g_ctrl && s.shm && s.state == State::Recording) g_ctrl->frames_encoded = s.shm->frames_encoded;
+}
+
+// ---------------------------------------------------------------------------------------------
 
 static void OnEngineReady()
 {
     engine::SetMovieFrameCallback(OnMovieFrame);
     engine::SetFrameCallback(OnFrame);
-    engine::AddCommand("p2r_start", "Render the engine movie (startmovie) with the GPU encoder. p2r_start for usage.", Cmd_Start);
-    engine::AddCommand("p2r_stop", "Stop a render started with p2r_start.", Cmd_Stop);
-    engine::AddCommand("p2r_after", "p2r_after <frames> <command...>: run a command later (there is no wait).", Cmd_After);
-    engine::Msg("p2r ready (D3D9Ex %s): p2r_start <name> [demo=<demo>] [fps=60] ...", d3d9ex::Device() ? "on" : "OFF");
-
-    // -p2r_exec <cfg>: runs a cfg once our commands exist (+exec on the command line runs before
-    // the client is up, when p2r_start is still unknown). For unattended renders.
-    if (const char* p = strstr(GetCommandLineA(), "-p2r_exec ")) {
-        char cfg[128] = {}, cmd[160];
-        sscanf_s(p + 10, "%127s", cfg, (unsigned)sizeof(cfg));
-        sprintf_s(cmd, "exec %s", cfg);
-        engine::Run(cmd);
+    wchar_t name[64];
+    swprintf_s(name, L"Local\\p2render_ctrl_%lu", GetCurrentProcessId());
+    g_ctrlMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(P2RControl), name);
+    g_ctrl = g_ctrlMap ? (P2RControl*)MapViewOfFile(g_ctrlMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(P2RControl)) : nullptr;
+    if (!g_ctrl) {
+        LOG("cannot create the control block (%lu)", GetLastError());
+        return;
     }
+    memset(g_ctrl, 0, sizeof(*g_ctrl));
+    g_ctrl->magic = P2R_CTRL_MAGIC;
+    g_ctrl->version = P2R_CTRL_VERSION;
+    if (!d3d9ex::Device()) SetCore(CORE_BROKEN, "le jeu ne tourne pas en Direct3D 9Ex");
+    else if (!engine::MovieHookReady()) SetCore(CORE_BROKEN, "point d'accroche du moteur introuvable (version du jeu ?)");
+    else SetCore(CORE_READY, "prêt");
+    LOG("control block %ls: %s", name, g_ctrl->core_message);
 }
 
 void Init(HMODULE self) { g_self = self; }
@@ -516,7 +489,7 @@ void OnPresentHooked()
 
 bool SkipPresent()
 {
-    return g_s.state == State::Recording && g_s.gpuReady && !g_s.opt.window;
+    return g_s.state == State::Recording && g_s.gpuReady && !g_s.job.show_window;
 }
 
 } // namespace capture

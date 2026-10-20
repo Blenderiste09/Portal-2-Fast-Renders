@@ -4,7 +4,9 @@
 // engine's WAV into the final MP4. No frame ever goes through the CPU.
 //
 //   p2r_encoder.exe <id>      (kernel objects Local\p2r_<id>_*, see src/shared.h)
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <d3d11.h>
 #include <d3d10.h>

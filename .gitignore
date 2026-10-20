@@ -3,3 +3,4 @@ re/out/
 re/bin/
 *.log
 *.mp4
+dist/
