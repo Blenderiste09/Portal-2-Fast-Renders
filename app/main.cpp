@@ -471,7 +471,7 @@ static void DownloadFfmpeg()
     Log("ffmpeg download: %s", url.c_str());
     DownloadProgress progress;
     HRESULT hr = URLDownloadToFileW(nullptr, Widen(url).c_str(), zip.c_str(), 0, &progress);
-    if (FAILED(hr)) return fail("téléchargement impossible (pas de connexion ?)");
+    if (FAILED(hr)) return fail("download failed (no connection?)");
     {
         std::lock_guard<std::mutex> l(g_mx);
         g_ffdl.percent = 92;
@@ -481,7 +481,7 @@ static void DownloadFfmpeg()
     GetSystemDirectoryW(sys, MAX_PATH);
     bool ok = RunAndWait(L"\"" + wstring(sys) + L"\\tar.exe\" -xf \"" + zip + L"\" -C \"" + dir + L"\"", 300000);
     DeleteFileW(zip.c_str());
-    if (!ok || FindFileUnder(dir, L"ffmpeg.exe", 3).empty()) return fail("extraction de l'archive impossible");
+    if (!ok || FindFileUnder(dir, L"ffmpeg.exe", 3).empty()) return fail("cannot extract the archive");
     std::lock_guard<std::mutex> l(g_mx);
     g_ffdl.running = false;
     g_ffdl.percent = 100;
@@ -591,7 +591,7 @@ static std::vector<Item> g_items;
 static int g_nextId = 1;
 static bool g_running;
 static std::atomic<bool> g_cancel;
-static string g_status = "Prêt";      // one line under the queue
+static string g_status = "Ready";      // one line under the queue
 static string g_gameState = "stopped"; // stopped | starting | ready | busy
 static DWORD g_gamePid;
 static std::atomic<DWORD> g_lastPoll;
@@ -625,7 +625,7 @@ static void AddDemo(const wstring& path)
     it.info = ReadDemo(path);
     if (!it.info.ok) {
         it.state = ItemState::Failed;
-        it.message = "ce fichier n'est pas une démo Source";
+        it.message = "this file is not a Source demo";
     }
     g_items.push_back(it);
 }
@@ -673,11 +673,11 @@ static bool StartGame(int w, int h, string& err)
 {
     wstring game = GameDir();
     if (game.empty()) {
-        err = "Portal 2 introuvable : indique son dossier dans les réglages";
+        err = "Portal 2 not found: set its folder in the settings";
         return false;
     }
     if (OtherPortal2Running()) {
-        err = "Portal 2 est déjà ouvert : ferme-le, P2Render le lance lui-même";
+        err = "Portal 2 is already running: close it, P2Render starts it itself";
         return false;
     }
     wstring dir = ExeDir();
@@ -700,7 +700,7 @@ static bool StartGame(int w, int h, string& err)
     if (!CreateProcessW(nullptr, cl.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi)) {
         CloseHandle(rd);
         CloseHandle(wr);
-        err = "p2r_launch.exe n'a pas pu démarrer";
+        err = "p2r_launch.exe could not start";
         return false;
     }
     CloseHandle(wr);
@@ -717,7 +717,7 @@ static bool StartGame(int w, int h, string& err)
     Log("launch exit %lu: %s", code, out.c_str());
     DWORD pid = 0;
     if (code != 0 || sscanf_s(out.c_str(), "pid %lu", &pid) != 1) {
-        err = "le lancement de Portal 2 a échoué : " + out;
+        err = "starting Portal 2 failed: " + out;
         return false;
     }
     g_gamePid = pid;
@@ -731,11 +731,11 @@ static bool StartGame(int w, int h, string& err)
     DWORD t0 = GetTickCount();
     while (GetTickCount() - t0 < 180000) {
         if (g_cancel) {
-            err = "annulé";
+            err = "cancelled";
             return false;
         }
         if (!GameAlive()) {
-            err = "Portal 2 s'est fermé pendant le démarrage";
+            err = "Portal 2 closed while starting";
             return false;
         }
         MuteProcessAudio(pid, true); // invisible rendering: never heard, the engine still mixes into the video
@@ -745,18 +745,18 @@ static bool StartGame(int w, int h, string& err)
         }
         if (g_ctrl && g_ctrl->magic == P2R_CTRL_MAGIC) {
             if (g_ctrl->version != P2R_CTRL_VERSION) {
-                err = "versions de P2Render incohérentes";
+                err = "P2Render versions do not match";
                 return false;
             }
             if (g_ctrl->core_state == CORE_READY) return true;
             if (g_ctrl->core_state == CORE_BROKEN) {
-                err = string("Portal 2 ne peut pas faire le rendu : ") + g_ctrl->core_message;
+                err = string("Portal 2 cannot render: ") + g_ctrl->core_message;
                 return false;
             }
         }
         Sleep(100);
     }
-    err = "Portal 2 n'a pas fini de démarrer à temps";
+    err = "Portal 2 did not finish starting in time";
     return false;
 }
 
@@ -828,8 +828,8 @@ static bool RenderItem(int id)
             ffmpeg = stream.active && !stream.ffmpegPath.empty() ? stream.ffmpegPath : FfmpegPath();
         }
         if (ffmpeg.empty()) {
-            finish(ItemState::Failed, stream.active ? "ffmpeg introuvable (le flux ne peut pas être écrit)"
-                                                    : "mode avancé : ffmpeg introuvable (télécharge-le ou choisis ffmpeg.exe dans les réglages)");
+            finish(ItemState::Failed, stream.active ? "ffmpeg not found (the stream cannot be written)"
+                                                    : "advanced mode: ffmpeg not found (download it or pick ffmpeg.exe in the settings)");
             return true;
         }
     }
@@ -838,7 +838,7 @@ static bool RenderItem(int id)
         {
             std::lock_guard<std::mutex> l(g_mx);
             g_gameState = "starting";
-            g_status = "Démarrage de Portal 2…";
+            g_status = "Starting Portal 2…";
         }
         string err;
         if (!StartGame(s.width, s.height, err)) {
@@ -855,7 +855,7 @@ static bool RenderItem(int id)
     {
         std::lock_guard<std::mutex> l(g_mx);
         g_gameState = "busy";
-        g_status = "Rendu en cours";
+        g_status = "Rendering";
     }
 
     // The engine plays demos from the game folder: copy it there for the time of the render.
@@ -864,7 +864,7 @@ static bool RenderItem(int id)
     CreateDirectoryW(tmpDir.c_str(), nullptr);
     wstring tmpDemo = tmpDir + L"\\demo" + std::to_wstring(id) + L".dem";
     if (!CopyFileW(src.c_str(), tmpDemo.c_str(), FALSE)) {
-        finish(ItemState::Failed, "impossible de copier la démo dans le dossier du jeu");
+        finish(ItemState::Failed, "cannot copy the demo into the game folder");
         return true;
     }
     wstring out;
@@ -910,7 +910,7 @@ static bool RenderItem(int id)
             lastMute = GetTickCount();
         }
         if (!GameAlive()) {
-            finish(ItemState::Failed, "Portal 2 s'est fermé pendant le rendu");
+            finish(ItemState::Failed, "Portal 2 closed during the render");
             sessionOk = false;
             break;
         }
@@ -939,7 +939,7 @@ static bool RenderItem(int id)
             if (stream.active && !stream.finalPath.empty()) {
                 // The stream we just watched is the video: assemble the usual MP4 from it (copy, no
                 // re-encoding) so a preview also leaves a file in the videos folder.
-                SetStatus("Assemblage de la vidéo…");
+                SetStatus("Assembling the video…");
                 wstring playlist = stream.dir + L"\\" + stream.out;
                 wstring cmd = L"\"" + ffmpeg + L"\" -hide_banner -loglevel error -y -i \"" + playlist + L"\" -c copy "
                                            L"-movflags +faststart \"" + stream.finalPath + L"\"";
@@ -949,7 +949,7 @@ static bool RenderItem(int id)
                     final = stream.finalPath;
                 } else {
                     Log("preview remux failed, the stream stays in %s", Narrow(stream.dir).c_str());
-                    finish(ItemState::Failed, "video assemblée impossible (le flux reste dans data\\stream)");
+                    finish(ItemState::Failed, "cannot assemble the video (the stream stays in data\\stream)");
                     break;
                 }
             }
@@ -957,7 +957,7 @@ static bool RenderItem(int id)
             break;
         }
         if (js == JOB_FAILED) {
-            finish(cancelSent ? ItemState::Cancelled : ItemState::Failed, cancelSent ? "annulé" : g_ctrl->job_message);
+            finish(cancelSent ? ItemState::Cancelled : ItemState::Failed, cancelSent ? "cancelled" : g_ctrl->job_message);
             break;
         }
     }
@@ -999,7 +999,7 @@ static void Worker()
     if (close) QuitGame();
     std::lock_guard<std::mutex> l(g_mx);
     if (g_cancel) {
-        g_status = "Rendu annulé";
+        g_status = "Render cancelled";
     } else {
         int done = 0, failed = 0;
         for (Item& i : g_items) {
@@ -1007,7 +1007,7 @@ static void Worker()
             if (i.state == ItemState::Failed) ++failed;
         }
         if (g_status.rfind("Portal 2", 0) != 0 && g_status.rfind("le lancement", 0) != 0)
-            g_status = failed ? "Terminé avec des erreurs" : "Terminé";
+            g_status = failed ? "Finished with errors" : "Finished";
     }
     g_gameState = GameAlive() ? "ready" : "stopped";
     g_running = false;
@@ -1034,7 +1034,7 @@ static std::vector<wstring> PickFiles(bool folder, const wstring& title, bool ex
                 dlg->SetFileTypes(2, spec);
             } else {
                 opt |= FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST;
-                COMDLG_FILTERSPEC spec[] = {{L"Démos Portal 2", L"*.dem"}, {L"Tous les fichiers", L"*.*"}};
+                COMDLG_FILTERSPEC spec[] = {{L"Portal 2 demos", L"*.dem"}, {L"All files", L"*.*"}};
                 dlg->SetFileTypes(2, spec);
                 wstring def = GameDir() + L"\\portal2";
                 IShellItem* si = nullptr;
@@ -1218,7 +1218,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/add-dialog" && r.method == "POST") {
-        auto files = PickFiles(false, L"Ajouter des démos");
+        auto files = PickFiles(false, L"Add demos");
         std::lock_guard<std::mutex> l(g_mx);
         for (auto& f : files) AddDemo(f);
         return "{\"added\":" + std::to_string(files.size()) + "}";
@@ -1308,10 +1308,10 @@ static string Handle(const Request& r, int& code, const char*& type)
         size_t idx = g_items.size();
         for (size_t i = 0; i < g_items.size(); ++i)
             if (g_items[i].id == id) idx = i;
-        if (idx == g_items.size()) return "{\"error\":\"démo inconnue\"}";
-        if (g_running) return "{\"error\":\"un rendu est déjà en cours\"}";
+        if (idx == g_items.size()) return "{\"error\":\"unknown demo\"}";
+        if (g_running) return "{\"error\":\"a render is already running\"}";
         wstring ffmpeg = FfmpegPath();
-        if (ffmpeg.empty()) return "{\"error\":\"ffmpeg introuvable : télécharge-le dans les réglages (Avancé)\"}";
+        if (ffmpeg.empty()) return "{\"error\":\"ffmpeg not found: download it in the settings (Advanced)\"}";
         wstring dir = g_dataDir + L"\\stream";
         SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
         ClearStreamDir(dir);
@@ -1337,7 +1337,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         g_items.insert(g_items.begin(), again);
         g_running = true;
         g_cancel = false;
-        g_status = "Aperçu en direct";
+        g_status = "Live preview";
         Log("preview %d: %s -> %s", id, Narrow(again.path).c_str(), Narrow(sp.finalPath).c_str());
         std::thread(Worker).detach();
         return "{\"ok\":true}";
@@ -1357,12 +1357,12 @@ static string Handle(const Request& r, int& code, const char*& type)
         sp.height = std::clamp(JsonInt(b, "height", sp.height), 240, 4320);
         sp.fps = std::clamp(JsonInt(b, "fps", sp.fps), 1, 1000);
         if (path.empty() || sp.dir.empty() || sp.out.empty() || sp.ffArgs.empty())
-            return "{\"error\":\"path, dir, out et ffArgs sont obligatoires\"}";
-        if (sp.out.find_first_of(L"\\\\/:*?\"<>|") != wstring::npos) return "{\"error\":\"out doit être un simple nom de fichier\"}";
-        if (!FileExists(path)) return "{\"error\":\"la démo n'existe pas\"}";
-        if (!ReadDemo(path).ok) return "{\"error\":\"ce fichier n'est pas une démo Source\"}";
+            return "{\"error\":\"path, dir, out and ffArgs are required\"}";
+        if (sp.out.find_first_of(L"\\\\/:*?\"<>|") != wstring::npos) return "{\"error\":\"out must be a plain file name\"}";
+        if (!FileExists(path)) return "{\"error\":\"the demo does not exist\"}";
+        if (!ReadDemo(path).ok) return "{\"error\":\"this file is not a Source demo\"}";
         std::lock_guard<std::mutex> l(g_mx);
-        if (g_running) return "{\"error\":\"un rendu est déjà en cours\"}";
+        if (g_running) return "{\"error\":\"a render is already running\"}";
         g_items.clear();
         AddDemo(path);
         sp.active = true;
@@ -1370,7 +1370,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         g_stream = sp;
         g_running = true;
         g_cancel = false;
-        g_status = "Rendu en cours";
+        g_status = "Rendering";
         Log("visualise %d: %s -> %s\\%s", sp.id, Narrow(path).c_str(), Narrow(sp.dir).c_str(), Narrow(sp.out).c_str());
         std::thread(Worker).detach();
         return "{\"ok\":true,\"id\":" + std::to_string(sp.id) + "}";
@@ -1382,14 +1382,14 @@ static string Handle(const Request& r, int& code, const char*& type)
                 if (i.state == ItemState::Cancelled) i.state = ItemState::Pending;
             g_running = true;
             g_cancel = false;
-            g_status = "Rendu en cours";
+            g_status = "Rendering";
             std::thread(Worker).detach();
         }
         return "{\"ok\":true}";
     }
     if (r.path == "/api/cancel" && r.method == "POST") {
         g_cancel = true;
-        SetStatus("Annulation…");
+        SetStatus("Cancelling…");
         return "{\"ok\":true}";
     }
     if (r.path == "/api/quit-game" && r.method == "POST") {
@@ -1399,7 +1399,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-out" && r.method == "POST") {
-        auto f = PickFiles(true, L"Dossier des vidéos");
+        auto f = PickFiles(true, L"Videos folder");
         if (!f.empty()) {
             std::lock_guard<std::mutex> l(g_mx);
             g_set.outDir = f[0];
@@ -1408,14 +1408,14 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-game" && r.method == "POST") {
-        auto f = PickFiles(true, L"Dossier de Portal 2 (celui qui contient portal2.exe)");
+        auto f = PickFiles(true, L"Portal 2 folder (the one that contains portal2.exe)");
         if (!f.empty()) {
             std::lock_guard<std::mutex> l(g_mx);
             if (FileExists(f[0] + L"\\portal2.exe")) {
                 g_set.gameDir = f[0];
                 SaveSettings();
             } else {
-                return "{\"error\":\"portal2.exe n'est pas dans ce dossier\"}";
+                return "{\"error\":\"portal2.exe is not in that folder\"}";
             }
         }
         return "{\"ok\":true}";
@@ -1430,7 +1430,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-ffmpeg" && r.method == "POST") {
-        auto f = PickFiles(false, L"Choisir ffmpeg.exe", true);
+        auto f = PickFiles(false, L"Choose ffmpeg.exe", true);
         if (!f.empty()) {
             std::lock_guard<std::mutex> l(g_mx);
             if (_wcsicmp(FileName(f[0]).c_str(), L"ffmpeg.exe") != 0) return "{\"error\":\"choisis le fichier ffmpeg.exe\"}";
@@ -1553,7 +1553,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
     bool headless = cmdLine && wcsstr(cmdLine, L"--no-window");
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\P2Render_single");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (!headless) MessageBoxW(nullptr, L"P2Render est déjà ouvert.", L"P2Render", MB_ICONINFORMATION);
+        if (!headless) MessageBoxW(nullptr, L"P2Render is already running.", L"P2Render", MB_ICONINFORMATION);
         return 0;
     }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -1616,17 +1616,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
         if (!edge) ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
-    // Lifetime: until the Edge window closes, or the page stops polling (closed tab, other browser):
-    // 20 s without a poll while idle (10 min headless). Never while a render runs. Edge may hand the
-    // window over to a browser process that is already running and exit at once: only a process that
-    // lived a moment means the window was really closed.
+    // Lifetime: the page polls /api/state every 500 ms, so as long as polls arrive the window is
+    // alive. When they stop (window closed) the application quits: quickly when the Edge process we
+    // started is gone, after 20 s otherwise (10 minutes headless). Never while a render runs. Edge
+    // may hand the window over to a browser process that is already running and exit at once, which
+    // is why the process alone cannot decide.
     g_lastPoll = GetTickCount();
-    DWORD edgeStart = GetTickCount();
+    bool edgeGone = false;
     for (;;) {
-        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0 && !g_running && GetTickCount() - edgeStart > 3000) break;
-        if (!edge) Sleep(500);
+        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0) edgeGone = true;
+        else if (!edge) Sleep(500);
         DWORD idle = GetTickCount() - g_lastPoll;
-        if (!g_running && idle > (headless ? 600000u : 20000u)) break;
+        DWORD limit = edgeGone ? 5000u : (headless ? 600000u : 20000u);
+        if (!g_running && idle > limit) break;
     }
     Log("window closed");
     if (g_running) {

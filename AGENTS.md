@@ -26,7 +26,7 @@ then `re/notes.md`.
 - `D:\OpenCode\ChocolateLoading` (the owner's other Portal 2 project) may be read; its `re/notes.md`
   has engine-wide findings (allocator, frame loop, demo recorder, D3D objects).
 - Git: commit every change (small commits, English messages). The owner talks French; the interface
-  is in French.
+  (app\ui\index.html, the messages it receives from the app and the core) is in English.
 
 ## Layout
 
@@ -87,7 +87,7 @@ Open the same URL in the browser pane to see / click the interface (resize to 12
 `portal2\p2r_ref.dem` is a 12 s test demo recorded with the current build. Expect it `done` with 730
 frames in ~1.3 s, the MP4 in `dist\videos_out` (portable default; the setting can point anywhere),
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
-`a2_228.dem`) must fail fast with "la démo n'a pas démarré". Check a video with `tools/preview`.
+`a2_228.dem`) must fail fast with "the demo did not start". Check a video with `tools/preview`.
 
 API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|preview|quit-game`.
 `POST /api/preview {id}` renders that demo **hidden** while ffmpeg writes an HLS stream into

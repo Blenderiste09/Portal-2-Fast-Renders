@@ -103,23 +103,23 @@ Copy-Item (Join-Path $dist "P2Render.exe"), (Join-Path $dist "p2r_launch.exe"), 
           (Join-Path $dist "p2r_encoder.exe") $portable -Force
 Copy-Item (Join-Path $dist "ui\*") (Join-Path $portable "ui") -Force
 $readme = @(
-    "P2Render - rendu rapide des demos de Portal 2",
+    "P2Render - fast rendering of Portal 2 demos",
     "",
-    "1. Double-clique sur P2Render.exe",
-    "2. Glisse une demo (.dem) dans la fenetre",
-    "3. Clique sur Lancer le rendu (les videos arrivent dans le dossier videos_out, juste a cote)",
+    "1. Double-click P2Render.exe",
+    "2. Drop a demo (.dem) into the window",
+    "3. Click Start rendering (the videos land in the videos_out folder next to this one)",
     "",
-    "Version portable : rien n'est installe. Tout ce que l'application ecrit reste dans ce",
-    "dossier, sous-dossier data (reglages, demos importees, profil du navigateur, ffmpeg",
-    "telecharge au besoin). Deplace ou copie le dossier entier, il fonctionne tel quel.",
+    "Portable build: nothing is installed. Everything the application writes stays in this folder",
+    "(the data subfolder: settings, imported demos, browser profile, ffmpeg downloaded if needed).",
+    "Move or copy the whole folder, it works as is.",
     "",
-    "Rien n'est installe dans Portal 2 : l'application lance le jeu et injecte son module",
-    "uniquement le temps du rendu.",
+    "Nothing is installed inside Portal 2: the application starts the game and injects its module",
+    "for the time of the render only.",
     "",
-    "Si Portal 2 n'est pas trouve (installation Steam ailleurs), indique son dossier dans",
-    "les reglages de l'interface."
+    "If Portal 2 is not found (Steam installation elsewhere), set its folder in the settings."
 )
-Set-Content -LiteralPath (Join-Path $portable "LISEZ-MOI.txt") -Value $readme -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $portable "README.txt") -Value $readme -Encoding UTF8
+Remove-Item (Join-Path $portable "LISEZ-MOI.txt") -Force -ErrorAction SilentlyContinue # older French name
 
 Write-Host "built $dist"
 Write-Host "portable: dist\portable (copy or zip the whole folder)"

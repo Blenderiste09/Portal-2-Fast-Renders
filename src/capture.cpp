@@ -252,11 +252,11 @@ static bool OnMovieFrame()
 
     if (!s.gpuReady) {
         if (!CreateGpu(s)) {
-            Fail(s, "impossible de créer les textures partagées");
+            Fail(s, "cannot create the shared textures");
             return true;
         }
         if (!StartEncoder(s)) {
-            Fail(s, s.shm && s.shm->error[0] ? s.shm->error : "l'encodeur n'a pas démarré");
+            Fail(s, s.shm && s.shm->error[0] ? s.shm->error : "the encoder did not start");
             return true;
         }
         s.startTick = GetTickCount();
@@ -267,7 +267,7 @@ static bool OnMovieFrame()
     // Wait for a free slot: back-pressure when the encoder is slower than the game.
     HANDLE waits[2] = {s.semFree, s.process};
     if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) {
-        Fail(s, s.shm->error[0] ? s.shm->error : "l'encodeur s'est arrêté");
+        Fail(s, s.shm->error[0] ? s.shm->error : "the encoder stopped");
         return true;
     }
     IDirect3DDevice9Ex* dev = d3d9ex::Device();
@@ -297,7 +297,7 @@ static void Finish(Session& s, const char* why)
     if (!s.gpuReady) {
         if (s.process && EncoderAlive(s)) TerminateProcess(s.process, 1);
         DeleteFileW(s.wavPath);
-        SetJob(JOB_FAILED, "aucune image rendue (%s)", why);
+        SetJob(JOB_FAILED, "no frame rendered (%s)", why);
         EndJob(s);
         return;
     }
@@ -349,13 +349,13 @@ static void StartJob(const P2RJob& job, int jobId)
     g_ctrl->render_ms = 0;
     g_ctrl->job_message[0] = 0;
     g_ctrl->core_state = CORE_BUSY;
-    SetJob(JOB_LOADING, "chargement de la démo");
+    SetJob(JOB_LOADING, "loading the demo");
 
     swprintf_s(s.wavPath, L"%hs\\p2r_tmp_%d.wav", engine::GameDir(), jobId);
     DeleteFileW(s.wavPath); // startmovie refuses to overwrite it
     if (!OpenIpc(s)) {
         CloseIpc(s);
-        SetJob(JOB_FAILED, "mémoire partagée impossible à créer (%lu)", GetLastError());
+        SetJob(JOB_FAILED, "cannot create the shared memory (%lu)", GetLastError());
         g_ctrl->core_state = CORE_READY;
         return;
     }
@@ -391,11 +391,11 @@ static void PollCommands()
     case CMD_CANCEL:
         if (g_s.state == State::Arming || g_s.state == State::Recording) {
             g_s.cancelled = true;
-            Fail(g_s, "annulé");
+            Fail(g_s, "cancelled");
         }
         break;
     case CMD_QUIT:
-        if (g_s.state != State::Idle) Fail(g_s, "annulé");
+        if (g_s.state != State::Idle) Fail(g_s, "cancelled");
         engine::Run("quit");
         break;
     default:
@@ -435,7 +435,7 @@ static void OnFrame()
                 }
             } else if (s.notPlayingFrames > 120 || GetTickCount() - s.armTick > 120000) {
                 // Demos recorded before a game update stop with "DataTable_ParseClientTablesFromBuffer".
-                Fail(s, "la démo n'a pas démarré (démo incompatible avec cette version du jeu ?)");
+                Fail(s, "the demo did not start (incompatible demo for this game version?)");
             }
         }
         break;
@@ -446,20 +446,20 @@ static void OnFrame()
             if (engine::IsPlayingDemo()) {
                 s.notPlayingFrames = 0;
             } else if (++s.notPlayingFrames >= 10) {
-                Finish(s, "démo terminée");
+                Finish(s, "demo finished");
                 break;
             }
         }
-        if (s.process && s.gpuReady && !EncoderAlive(s)) Fail(s, s.shm->error[0] ? s.shm->error : "l'encodeur s'est arrêté");
+        if (s.process && s.gpuReady && !EncoderAlive(s)) Fail(s, s.shm->error[0] ? s.shm->error : "the encoder stopped");
         break;
     case State::Finishing: {
         int st = s.shm->enc_state;
         if (g_ctrl) g_ctrl->frames_encoded = s.shm->frames_encoded;
         bool alive = EncoderAlive(s);
         if (st == P2R_ENC_DONE) {
-            SetJob(JOB_DONE, "vidéo écrite : %ls", s.job.out_path);
+            SetJob(JOB_DONE, "video written: %ls", s.job.out_path);
         } else if (st == P2R_ENC_FAILED || !alive) {
-            SetJob(JOB_FAILED, "encodeur : %s", s.shm->error[0] ? s.shm->error : "arrêté");
+            SetJob(JOB_FAILED, "encoder: %s", s.shm->error[0] ? s.shm->error : "stopped");
         } else {
             break;
         }
@@ -489,7 +489,7 @@ static void OnEngineReady()
     g_ctrl->version = P2R_CTRL_VERSION;
     if (!d3d9ex::Device()) SetCore(CORE_BROKEN, "le jeu ne tourne pas en Direct3D 9Ex");
     else if (!engine::MovieHookReady()) SetCore(CORE_BROKEN, "point d'accroche du moteur introuvable (version du jeu ?)");
-    else SetCore(CORE_READY, "prêt");
+    else SetCore(CORE_READY, "ready");
     LOG("control block %ls: %s", name, g_ctrl->core_message);
 }
 

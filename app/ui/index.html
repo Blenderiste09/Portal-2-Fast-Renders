@@ -154,98 +154,98 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
     <div class="logo"><div></div></div>
     <div>
       <h1>P2Render</h1>
-      <div class="sub">Rendu ultra-rapide de démos Portal 2, encodé sur la carte graphique</div>
+      <div class="sub">Ultra-fast Portal 2 demo rendering, encoded on the GPU</div>
     </div>
     <div class="spacer"></div>
-    <div class="pill" id="gamePill"><span class="dot" id="gameDot"></span><span id="gameText">Recherche de Portal 2…</span></div>
+    <div class="pill" id="gamePill"><span class="dot" id="gameDot"></span><span id="gameText">Looking for Portal 2…</span></div>
   </header>
 
   <main>
     <section class="card" id="queueCard">
       <div class="card-h">
-        <h2>Démos</h2><span class="count" id="count">0</span>
+        <h2>Demos</h2><span class="count" id="count">0</span>
         <div class="spacer"></div>
-        <button class="btn ghost" id="clearBtn" title="Retirer les démos terminées">Vider les terminées</button>
-        <button class="btn" id="addBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Ajouter des démos</button>
+        <button class="btn ghost" id="clearBtn" title="Remove the finished demos">Clear finished</button>
+        <button class="btn" id="addBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add demos</button>
       </div>
       <div class="queue" id="queue"></div>
     </section>
 
     <aside class="card">
-      <div class="card-h"><h2>Réglages</h2></div>
+      <div class="card-h"><h2>Settings</h2></div>
       <div class="settings">
         <div class="field">
-          <span class="label">Résolution</span>
+          <span class="label">Resolution</span>
           <select id="res">
             <option value="1280x720">1280 × 720 (720p)</option>
             <option value="1600x900">1600 × 900</option>
             <option value="1920x1080">1920 × 1080 (1080p)</option>
             <option value="2560x1440">2560 × 1440 (1440p)</option>
             <option value="3840x2160">3840 × 2160 (4K)</option>
-            <option value="custom">Personnalisée…</option>
+            <option value="custom">Custom…</option>
           </select>
           <div class="row" id="customRes" style="margin-top:8px;display:none">
             <input type="number" id="w" min="320" max="7680"> <span style="color:var(--muted)">×</span> <input type="number" id="h" min="240" max="4320">
           </div>
-          <div class="hint">La fenêtre du jeu ne peut pas dépasser la taille de ton écran.</div>
+          <div class="hint">The game window cannot be larger than your screen.</div>
         </div>
         <div class="field">
-          <span class="label">Images par seconde</span>
+          <span class="label">Frames per second</span>
           <div class="seg" id="fps"><button data-v="30">30</button><button data-v="60">60</button><button data-v="120">120</button></div>
         </div>
         <div class="field">
-          <span class="label">Encodage</span>
-          <div class="seg" id="mode"><button data-v="simple">Simple</button><button data-v="advanced">Avancé (ffmpeg)</button></div>
+          <span class="label">Encoding</span>
+          <div class="seg" id="mode"><button data-v="simple">Simple</button><button data-v="advanced">Advanced (ffmpeg)</button></div>
         </div>
         <div id="simplePanel">
           <div class="field">
-            <span class="label">Format vidéo</span>
+            <span class="label">Video format</span>
             <div class="seg" id="codec"><button data-v="h264">H.264</button><button data-v="hevc">HEVC (H.265)</button></div>
           </div>
           <div class="field">
-            <span class="label">Qualité</span>
-            <div class="seg" id="quality"><button data-v="standard">Standard</button><button data-v="high">Haute</button><button data-v="max">Maximale</button></div>
+            <span class="label">Quality</span>
+            <div class="seg" id="quality"><button data-v="standard">Standard</button><button data-v="high">High</button><button data-v="max">Maximum</button></div>
             <div class="hint" id="bitrate"></div>
           </div>
         </div>
         <div id="advPanel" style="display:none">
           <div class="ffbox" id="ffBox"></div>
           <div class="field">
-            <span class="label">Encodeur vidéo</span>
+            <span class="label">Video encoder</span>
             <select id="vcodec"></select>
           </div>
           <div class="row2">
             <div class="field"><span class="label" id="presetLabel">Preset</span><select id="preset"></select></div>
-            <div class="field"><span class="label" id="qLabel">Qualité</span><input type="number" id="q"></div>
+            <div class="field"><span class="label" id="qLabel">Quality</span><input type="number" id="q"></div>
           </div>
           <div class="hint" id="qHint" style="margin-top:-6px"></div>
           <div class="row2">
-            <div class="field"><span class="label">Format des pixels</span><select id="pixfmt"></select></div>
-            <div class="field"><span class="label">Son</span><select id="audio"></select></div>
+            <div class="field"><span class="label">Pixel format</span><select id="pixfmt"></select></div>
+            <div class="field"><span class="label">Audio</span><select id="audio"></select></div>
           </div>
           <div class="field">
-            <span class="label">Conteneur</span>
+            <span class="label">Container</span>
             <div class="seg" id="container"><button data-v="mp4">MP4</button><button data-v="mkv">MKV</button><button data-v="mov">MOV</button></div>
           </div>
           <div class="field">
-            <span class="label">Options ffmpeg en plus (vidéo)</span>
-            <input type="text" id="extra" placeholder="ex. -tune film -g 120 -vf eq=saturation=1.1" spellcheck="false">
+            <span class="label">Extra ffmpeg options (video)</span>
+            <input type="text" id="extra" placeholder="e.g. -tune film -g 120 -vf eq=saturation=1.1" spellcheck="false">
           </div>
           <div class="field">
-            <span class="label">Commande générée</span>
+            <span class="label">Generated command</span>
             <div class="cmd" id="cmdPreview"></div>
           </div>
         </div>
         <div class="field">
-          <span class="label">Dossier des vidéos</span>
-          <div class="row"><div class="path" id="outDir"></div><button class="btn" id="outBtn">Changer</button><button class="btn icon-btn" id="outOpen" title="Ouvrir le dossier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button></div>
+          <span class="label">Videos folder</span>
+          <div class="row"><div class="path" id="outDir"></div><button class="btn" id="outBtn">Change</button><button class="btn icon-btn" id="outOpen" title="Open the folder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button></div>
         </div>
         <div class="sep"></div>
-        <div class="toggle" id="tClose"><span>Fermer Portal 2 à la fin<small>Sinon le jeu reste ouvert pour les rendus suivants</small></span><div class="switch"></div></div>
+        <div class="toggle" id="tClose"><span>Close Portal 2 when done<small>Otherwise the game stays open for the next renders</small></span><div class="switch"></div></div>
         <div class="sep"></div>
         <div class="field">
-          <span class="label">Dossier de Portal 2</span>
-          <div class="row"><div class="path" id="gameDir"></div><button class="btn" id="gameBtn">Changer</button></div>
+          <span class="label">Portal 2 folder</span>
+          <div class="row"><div class="path" id="gameDir"></div><button class="btn" id="gameBtn">Change</button></div>
         </div>
       </div>
     </aside>
@@ -253,8 +253,8 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
 </div>
 
 <footer>
-  <div class="status" id="status">Prêt</div>
-  <button class="go" id="goBtn">Lancer le rendu</button>
+  <div class="status" id="status">Ready</div>
+  <button class="go" id="goBtn">Start rendering</button>
 </footer>
 <div class="toast" id="toast"></div>
 
@@ -262,17 +262,17 @@ footer { position: sticky; bottom: 0; display: flex; align-items: center; gap: 1
 <div class="live" id="live">
   <div class="live-h">
     <span class="dot busy" id="liveDot"></span>
-    <b>Aperçu en direct</b>
+    <b>Live preview</b>
     <span class="live-name" id="liveName"></span>
     <span class="spacer"></span>
     <span class="live-info" id="liveInfo"></span>
-    <button class="btn" id="liveFolder" style="display:none">Dossier</button>
-    <button class="btn" id="liveStop">Arrêter</button>
-    <button class="btn primary" id="liveHide">Masquer</button>
+    <button class="btn" id="liveFolder" style="display:none">Folder</button>
+    <button class="btn" id="liveStop">Stop</button>
+    <button class="btn primary" id="liveHide">Hide</button>
   </div>
   <div class="live-body">
     <video id="liveVideo" controls playsinline></video>
-    <div class="live-wait" id="liveWait"><div class="bar indet"><div></div></div><span>Le flux démarre…</span></div>
+    <div class="live-wait" id="liveWait"><div class="bar indet"><div></div></div><span>Starting the stream…</span></div>
   </div>
 </div>
 
@@ -294,7 +294,7 @@ function dur(sec) { if (!(sec > 0)) return '—'; sec = Math.round(sec); const m
 // Render time: hh:mm:ss, dropping the units that carry nothing (1:04:05, 4:05, 1,4 s).
 function hms(sec) {
   if (!(sec >= 0)) return '—';
-  if (sec < 60) return (sec < 9.95 ? sec.toFixed(1) : sec.toFixed(0)).replace('.', ',') + ' s';
+  if (sec < 60) return (sec < 9.95 ? sec.toFixed(1) : sec.toFixed(0)) + ' s';
   const t = Math.round(sec), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
@@ -311,40 +311,40 @@ const ICON = {
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>',
   live: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="2"/><path d="M15 11l6-3.5v9L15 13z"/></svg>',
 };
-const STATE_TXT = { pending: 'En attente', loading: 'Chargement', recording: 'Rendu', encoding: 'Finalisation', done: 'Terminé', failed: 'Erreur', cancelled: 'Annulé' };
+const STATE_TXT = { pending: 'Pending', loading: 'Loading', recording: 'Rendering', encoding: 'Finishing', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
 
 function itemHtml(it) {
   const active = ['loading', 'recording', 'encoding'].includes(it.state);
   const cls = it.state === 'done' ? 'done' : it.state === 'failed' ? 'failed' : '';
-  let meta = `${esc(it.map || 'carte inconnue')} · ${dur(it.seconds)}`, bar = '';
+  let meta = `${esc(it.map || 'unknown map')} · ${dur(it.seconds)}`, bar = '';
   if (it.state === 'recording' || it.state === 'encoding') {
     const pct = it.expected ? Math.min(100, 100 * it.frames / it.expected) : 0;
     const fps = it.renderMs > 0 ? it.frames * 1000 / it.renderMs : 0;
     if (it.state === 'recording') {
       const left = fps > 0 && it.expected ? Math.max(0, (it.expected - it.frames) / fps) : 0;
-      meta = `${it.frames} / ${it.expected || '?'} images · ${fps.toFixed(0)} images/s · reste ${hms(left)}`;
+      meta = `${it.frames} / ${it.expected || '?'} frames · ${fps.toFixed(0)} fps · ${hms(left)} left`;
       bar = `<div class="bar"><div style="width:${pct}%"></div></div>`;
     } else {
-      meta = `Finalisation de la vidéo et du son… (${it.encoded} / ${it.frames} images encodées)`;
+      meta = `Finishing the video and the audio… (${it.encoded} / ${it.frames} frames encoded)`;
       bar = `<div class="bar enc indet"><div></div></div>`;
     }
   } else if (it.state === 'loading') {
-    meta = 'Chargement de la démo dans Portal 2…'; bar = '<div class="bar indet"><div></div></div>';
+    meta = 'Loading the demo in Portal 2…'; bar = '<div class="bar indet"><div></div></div>';
   } else if (it.state === 'done') {
     const fps = it.renderMs > 0 ? (it.frames * 1000 / it.renderMs).toFixed(0) : '?';
-    meta = `${hms(it.seconds)} de vidéo rendue en <b>${hms(it.renderMs / 1000)}</b> · ${fps} images/s · ` +
-           `<a class="link" data-act="folder" data-id="${it.id}" title="Afficher dans l’explorateur : ${esc(it.output)}">${esc(baseName(it.output) || 'la vidéo')}</a>`;
+    meta = `${hms(it.seconds)} of video rendered in <b>${hms(it.renderMs / 1000)}</b> · ${fps} fps · ` +
+           `<a class="link" data-act="folder" data-id="${it.id}" title="Show in Explorer: ${esc(it.output)}">${esc(baseName(it.output) || 'the video')}</a>`;
   } else if (it.state === 'failed') {
-    meta = `<span class="err">${esc(it.message || 'échec')}</span>`;
+    meta = `<span class="err">${esc(it.message || 'failed')}</span>`;
   }
   let acts = '';
-  if (it.state === 'done') acts += `<button class="btn icon-btn" title="Lire la vidéo" data-act="play" data-id="${it.id}">${ICON.play}</button><button class="btn icon-btn" title="Afficher dans le dossier" data-act="folder" data-id="${it.id}">${ICON.folder}</button>`;
+  if (it.state === 'done') acts += `<button class="btn icon-btn" title="Play the video" data-act="play" data-id="${it.id}">${ICON.play}</button><button class="btn icon-btn" title="Show in folder" data-act="folder" data-id="${it.id}">${ICON.folder}</button>`;
   if (it.preview && ['loading', 'recording', 'encoding'].includes(it.state))
-    acts += `<button class="btn icon-btn" title="Afficher l’aperçu en direct" data-act="showlive" data-id="${it.id}">${ICON.live}</button>`;
+    acts += `<button class="btn icon-btn" title="Show the live preview" data-act="showlive" data-id="${it.id}">${ICON.live}</button>`;
   else if (['pending', 'done', 'failed', 'cancelled'].includes(it.state) && !S.running)
-    acts += `<button class="btn icon-btn" title="Aperçu en direct : regarder la démo pendant son rendu" data-act="preview" data-id="${it.id}">${ICON.live}</button>`;
-  if (['failed', 'cancelled', 'done'].includes(it.state) && !S.running) acts += `<button class="btn icon-btn ghost" title="Recommencer" data-act="retry" data-id="${it.id}">${ICON.retry}</button>`;
-  if (!active) acts += `<button class="btn icon-btn ghost" title="Retirer" data-act="remove" data-id="${it.id}">${ICON.x}</button>`;
+    acts += `<button class="btn icon-btn" title="Live preview: watch the demo while it renders" data-act="preview" data-id="${it.id}">${ICON.live}</button>`;
+  if (['failed', 'cancelled', 'done'].includes(it.state) && !S.running) acts += `<button class="btn icon-btn ghost" title="Render again" data-act="retry" data-id="${it.id}">${ICON.retry}</button>`;
+  if (!active) acts += `<button class="btn icon-btn ghost" title="Remove" data-act="remove" data-id="${it.id}">${ICON.x}</button>`;
   return `<div class="item ${active ? 'active' : ''} ${cls}">
     <div class="thumb">${it.state === 'done' ? ICON.ok : it.state === 'failed' ? ICON.err : ICON.film}</div>
     <div style="min-width:0"><div class="name" title="${esc(it.path)}">${esc(it.file)}</div><div class="meta ${it.state === 'failed' ? 'err' : ''}">${meta}</div>${bar}</div>
@@ -402,11 +402,11 @@ function updateLive() {
   const active = ['loading', 'recording', 'encoding'].includes(it.state);
   const fps = it.renderMs > 0 ? Math.round(it.frames * 1000 / it.renderMs) : 0;
   $('liveDot').className = 'dot ' + (active ? 'busy' : it.state === 'done' ? 'ok' : 'bad');
-  if (it.state === 'loading') $('liveInfo').textContent = 'chargement de la démo…';
-  else if (it.state === 'recording') $('liveInfo').textContent = `${it.frames} / ${it.expected || '?'} images · ${fps} img/s`;
-  else if (it.state === 'encoding') $('liveInfo').textContent = 'finalisation de la vidéo…';
-  else if (it.state === 'done') $('liveInfo').innerHTML = `rendu terminé en <b>${hms(it.renderMs / 1000)}</b> · ${fps} img/s`;
-  else if (it.state === 'failed') $('liveInfo').textContent = it.message || 'échec';
+  if (it.state === 'loading') $('liveInfo').textContent = 'loading the demo…';
+  else if (it.state === 'recording') $('liveInfo').textContent = `${it.frames} / ${it.expected || '?'} frames · ${fps} fps`;
+  else if (it.state === 'encoding') $('liveInfo').textContent = 'finishing the video…';
+  else if (it.state === 'done') $('liveInfo').innerHTML = `rendered in <b>${hms(it.renderMs / 1000)}</b> · ${fps} fps`;
+  else if (it.state === 'failed') $('liveInfo').textContent = it.message || 'failed';
   $('liveStop').style.display = active ? '' : 'none';
   $('liveFolder').style.display = it.state === 'done' ? '' : 'none';
   if (active && it.state === 'recording') tryAttachLive();
@@ -426,13 +426,13 @@ function render() {
   const g = S.game, st = S.settings;
   const dot = $('gameDot');
   dot.className = 'dot ' + (!g.found ? 'bad' : g.state === 'busy' || g.state === 'starting' ? 'busy' : 'ok');
-  $('gameText').textContent = !g.found ? 'Portal 2 introuvable' : g.state === 'starting' ? 'Démarrage de Portal 2…' : g.state === 'busy' ? 'Portal 2 en cours de rendu' : g.state === 'ready' ? 'Portal 2 ouvert' : 'Portal 2 détecté';
+  $('gameText').textContent = !g.found ? 'Portal 2 not found' : g.state === 'starting' ? 'Starting Portal 2…' : g.state === 'busy' ? 'Portal 2 is rendering' : g.state === 'ready' ? 'Portal 2 open' : 'Portal 2 found';
 
   const items = S.items;
   $('count').textContent = items.length;
   const q = $('queue');
   const html = (items.length ? items.map(itemHtml).join('') : '') +
-    `<div class="drop" id="drop" ${items.length ? 'style="padding:18px"' : ''}>${items.length ? '' : ICON.upload}<big>${items.length ? '' : 'Glisse tes démos ici'}</big>${items.length ? '+ Ajouter d’autres démos (ou glisse-les ici)' : 'ou clique pour choisir des fichiers .dem'}</div>`;
+    `<div class="drop" id="drop" ${items.length ? 'style="padding:18px"' : ''}>${items.length ? '' : ICON.upload}<big>${items.length ? '' : 'Drop your demos here'}</big>${items.length ? '+ Add more demos (or drop them here)' : 'or click to pick .dem files'}</div>`;
   if (q._html !== html) { q.innerHTML = html; q._html = html; }
 
   if (!editing) {
@@ -443,9 +443,9 @@ function render() {
     $('w').value = st.width; $('h').value = st.height;
   }
   setSeg('fps', st.fps); setSeg('codec', st.codec); setSeg('quality', st.quality);
-  $('bitrate').textContent = `≈ ${(st.bitrate / 1000).toFixed(0)} Mbit/s · encodage matériel de la carte graphique`;
+  $('bitrate').textContent = `≈ ${(st.bitrate / 1000).toFixed(0)} Mbit/s · hardware encoding on the GPU`;
   $('outDir').textContent = st.outDir; $('outDir').title = st.outDir;
-  $('gameDir').textContent = g.path || 'introuvable : choisis le dossier'; $('gameDir').title = g.path;
+  $('gameDir').textContent = g.path || 'not found: pick the folder'; $('gameDir').title = g.path;
   setSwitch('tClose', st.closeGame);
   setSeg('mode', st.advanced ? 'advanced' : 'simple');
   $('simplePanel').style.display = st.advanced ? 'none' : '';
@@ -454,14 +454,14 @@ function render() {
 
   const pending = items.filter(i => i.state === 'pending').length;
   const go = $('goBtn');
-  if (S.running) { go.textContent = 'Annuler'; go.className = 'go stop'; go.disabled = false; }
-  else { go.textContent = pending ? `Lancer le rendu (${pending} démo${pending > 1 ? 's' : ''})` : 'Lancer le rendu'; go.className = 'go'; go.disabled = !pending || !g.found; }
+  if (S.running) { go.textContent = 'Cancel'; go.className = 'go stop'; go.disabled = false; }
+  else { go.textContent = pending ? `Start rendering (${pending} demo${pending > 1 ? 's' : ''})` : 'Start rendering'; go.className = 'go'; go.disabled = !pending || !g.found; }
   const cur = items.find(i => ['loading', 'recording', 'encoding'].includes(i.state));
   $('status').innerHTML = S.running && cur ? `<b>${esc(cur.file)}</b> · ${esc(STATE_TXT[cur.state])}` : esc(S.status);
   for (const b of document.querySelectorAll('aside select, aside input, aside .seg button, #outBtn, #gameBtn, #ffBox button')) b.disabled = S.running;
 }
 
-async function refresh() { try { S = await api('state'); if (!S.settings.ffUi && !S.running) return saveFf({}); render(); updateLive(); } catch (e) { $('status').textContent = 'P2Render ne répond plus.'; } }
+async function refresh() { try { S = await api('state'); if (!S.settings.ffUi && !S.running) return saveFf({}); render(); updateLive(); } catch (e) { $('status').textContent = 'P2Render stopped responding.'; } }
 async function save(patch) { if (!S || S.running) return; Object.assign(S.settings, patch); render(); await api('settings', S.settings); refresh(); }
 
 for (const id of ['fps', 'codec', 'quality'])
@@ -479,31 +479,31 @@ $('mode').addEventListener('click', e => { const v = e.target.dataset.v; if (v) 
 
 // ---- Advanced mode (ffmpeg) -----------------------------------------------------------------
 const X264P = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
-const NVP = [['p1', 'p1 (le plus rapide)'], ['p2', 'p2'], ['p3', 'p3'], ['p4', 'p4'], ['p5', 'p5'], ['p6', 'p6'], ['p7', 'p7 (la meilleure qualité)']];
+const NVP = [['p1', 'p1 (fastest)'], ['p2', 'p2'], ['p3', 'p3'], ['p4', 'p4'], ['p5', 'p5'], ['p6', 'p6'], ['p7', 'p7 (best quality)']];
 const CODECS = {
-  h264_nvenc: { group: 'Carte graphique NVIDIA (rapide)', label: 'H.264 – NVENC', presets: NVP, preset: 'p5', q: ['CQ', 0, 51, 19], qHint: 'Plus bas = meilleure qualité. 19 ≈ excellent.', pix: ['yuv420p', 'yuv444p'],
+  h264_nvenc: { group: 'NVIDIA GPU (fast)', label: 'H.264 – NVENC', presets: NVP, preset: 'p5', q: ['CQ', 0, 51, 19], qHint: 'Lower is better. 19 ≈ excellent.', pix: ['yuv420p', 'yuv444p'],
     args: (p, q) => `-c:v h264_nvenc -preset ${p} -tune hq -rc vbr -cq ${q} -b:v 0` },
-  hevc_nvenc: { group: 'Carte graphique NVIDIA (rapide)', label: 'HEVC – NVENC', presets: NVP, preset: 'p5', q: ['CQ', 0, 51, 21], qHint: 'Plus bas = meilleure qualité.', pix: ['yuv420p', 'p010le', 'yuv444p'], hevc: true,
+  hevc_nvenc: { group: 'NVIDIA GPU (fast)', label: 'HEVC – NVENC', presets: NVP, preset: 'p5', q: ['CQ', 0, 51, 21], qHint: 'Lower is better.', pix: ['yuv420p', 'p010le', 'yuv444p'], hevc: true,
     args: (p, q) => `-c:v hevc_nvenc -preset ${p} -tune hq -rc vbr -cq ${q} -b:v 0` },
-  av1_nvenc: { group: 'Carte graphique NVIDIA (rapide)', label: 'AV1 – NVENC (RTX 40 et plus)', presets: NVP, preset: 'p5', q: ['CQ', 0, 63, 28], qHint: 'Plus bas = meilleure qualité.', pix: ['yuv420p', 'p010le'],
+  av1_nvenc: { group: 'NVIDIA GPU (fast)', label: 'AV1 – NVENC (RTX 40 and newer)', presets: NVP, preset: 'p5', q: ['CQ', 0, 63, 28], qHint: 'Lower is better.', pix: ['yuv420p', 'p010le'],
     args: (p, q) => `-c:v av1_nvenc -preset ${p} -rc vbr -cq ${q} -b:v 0` },
-  libx264: { group: 'Processeur (plus lent)', label: 'H.264 – x264', presets: X264P.map(v => [v, v]), preset: 'medium', q: ['CRF', 0, 51, 18], qHint: '0 = sans perte, 18 ≈ visuellement sans perte, 23 = défaut.', pix: ['yuv420p', 'yuv444p', 'yuv420p10le'],
+  libx264: { group: 'CPU (slower)', label: 'H.264 – x264', presets: X264P.map(v => [v, v]), preset: 'medium', q: ['CRF', 0, 51, 18], qHint: '0 = lossless, 18 ≈ visually lossless, 23 = default.', pix: ['yuv420p', 'yuv444p', 'yuv420p10le'],
     args: (p, q) => `-c:v libx264 -preset ${p} -crf ${q}` },
-  libx265: { group: 'Processeur (plus lent)', label: 'HEVC – x265', presets: X264P.map(v => [v, v]), preset: 'medium', q: ['CRF', 0, 51, 20], qHint: 'Plus bas = meilleure qualité, 28 = défaut.', pix: ['yuv420p', 'yuv420p10le', 'yuv444p'], hevc: true,
+  libx265: { group: 'CPU (slower)', label: 'HEVC – x265', presets: X264P.map(v => [v, v]), preset: 'medium', q: ['CRF', 0, 51, 20], qHint: 'Lower is better, 28 = default.', pix: ['yuv420p', 'yuv420p10le', 'yuv444p'], hevc: true,
     args: (p, q) => `-c:v libx265 -preset ${p} -crf ${q}` },
-  libsvtav1: { group: 'Processeur (plus lent)', label: 'AV1 – SVT-AV1', presets: [...Array(14).keys()].map(i => [String(i), i + (i === 0 ? ' (le plus lent)' : i === 13 ? ' (le plus rapide)' : '')]), preset: '8', q: ['CRF', 0, 63, 30], qHint: 'Plus bas = meilleure qualité.', pix: ['yuv420p', 'yuv420p10le'],
+  libsvtav1: { group: 'CPU (slower)', label: 'AV1 – SVT-AV1', presets: [...Array(14).keys()].map(i => [String(i), i + (i === 0 ? ' (slowest)' : i === 13 ? ' (fastest)' : '')]), preset: '8', q: ['CRF', 0, 63, 30], qHint: 'Lower is better.', pix: ['yuv420p', 'yuv420p10le'],
     args: (p, q) => `-c:v libsvtav1 -preset ${p} -crf ${q}` },
-  prores_ks: { group: 'Montage', label: 'ProRes', presets: [['0', 'Proxy'], ['1', 'LT'], ['2', 'Standard'], ['3', 'HQ'], ['4', '4444'], ['5', '4444 XQ']], presetLabel: 'Profil', preset: '3', q: null, pix: ['yuv422p10le', 'yuv444p10le'],
+  prores_ks: { group: 'Editing', label: 'ProRes', presets: [['0', 'Proxy'], ['1', 'LT'], ['2', 'Standard'], ['3', 'HQ'], ['4', '4444'], ['5', '4444 XQ']], presetLabel: 'Profile', preset: '3', q: null, pix: ['yuv422p10le', 'yuv444p10le'],
     args: p => `-c:v prores_ks -profile:v ${p} -vendor apl0` },
-  ffv1: { group: 'Montage', label: 'FFV1 (sans perte)', presets: null, q: null, pix: ['yuv444p', 'yuv420p', 'bgr0'],
+  ffv1: { group: 'Editing', label: 'FFV1 (lossless)', presets: null, q: null, pix: ['yuv444p', 'yuv420p', 'bgr0'],
     args: () => '-c:v ffv1 -level 3 -slicecrc 1' },
 };
 const AUDIO = {
   aac320: ['AAC 320 kbit/s', '-c:a aac -b:a 320k', ['mp4', 'mkv', 'mov']],
   aac192: ['AAC 192 kbit/s', '-c:a aac -b:a 192k', ['mp4', 'mkv', 'mov']],
   opus: ['Opus 256 kbit/s', '-c:a libopus -b:a 256k', ['mp4', 'mkv']],
-  flac: ['FLAC (sans perte)', '-c:a flac', ['mp4', 'mkv', 'mov']],
-  pcm: ['PCM 16 bits (sans compression)', '-c:a pcm_s16le', ['mkv', 'mov']],
+  flac: ['FLAC (lossless)', '-c:a flac', ['mp4', 'mkv', 'mov']],
+  pcm: ['PCM 16-bit (uncompressed)', '-c:a pcm_s16le', ['mkv', 'mov']],
 };
 const FF_DEFAULT = { vcodec: 'h264_nvenc', preset: 'p5', q: 19, pixfmt: 'yuv420p', audio: 'aac320', extra: '' };
 
@@ -525,9 +525,9 @@ function renderAdvanced() {
   const st = S.settings, ff = S.ffmpeg, u = ffState(), c = CODECS[u.vcodec] || CODECS.libx264;
   const box = $('ffBox');
   let html;
-  if (ff.downloading) html = `<span>Téléchargement de ffmpeg…</span><div class="bar"><div style="width:${ff.percent}%"></div></div><span>${ff.percent} %</span>`;
-  else if (ff.found) html = `<span style="color:var(--green)">●</span><span class="grow" title="${esc(ff.path)}">ffmpeg : ${esc(ff.path)}</span><button class="btn" data-ff="pick">Changer</button>`;
-  else html = `<span class="grow warn">ffmpeg n’est pas installé${ff.error ? ' (' + esc(ff.error) + ')' : ''}</span><button class="btn" data-ff="dl">Télécharger (~85 Mo)</button><button class="btn" data-ff="pick">Choisir…</button>`;
+  if (ff.downloading) html = `<span>Downloading ffmpeg…</span><div class="bar"><div style="width:${ff.percent}%"></div></div><span>${ff.percent} %</span>`;
+  else if (ff.found) html = `<span style="color:var(--green)">●</span><span class="grow" title="${esc(ff.path)}">ffmpeg: ${esc(ff.path)}</span><button class="btn" data-ff="pick">Change</button>`;
+  else html = `<span class="grow warn">ffmpeg is not installed${ff.error ? ' (' + esc(ff.error) + ')' : ''}</span><button class="btn" data-ff="dl">Download (~85 MB)</button><button class="btn" data-ff="pick">Choose…</button>`;
   if (box._html !== html) { box.innerHTML = html; box._html = html; }
   box.className = 'ffbox' + (ff.found || ff.downloading ? '' : ' missing');
   const focused = document.activeElement;
@@ -551,7 +551,7 @@ function renderAdvanced() {
 }
 function updateCmd() {
   const st = S.settings, u = ffState(), f = buildFf(u, st.container);
-  $('cmdPreview').innerHTML = `ffmpeg -f rawvideo -pix_fmt bgra -s ${st.width}x${st.height} -framerate ${st.fps} -i <i>(images du jeu)</i> <b>${esc(f.v)}</b> → vidéo, puis son : <b>${esc(f.a)}</b> → .${st.container}`;
+  $('cmdPreview').innerHTML = `ffmpeg -f rawvideo -pix_fmt bgra -s ${st.width}x${st.height} -framerate ${st.fps} -i <i>(game frames)</i> <b>${esc(f.v)}</b> → video, then audio: <b>${esc(f.a)}</b> → .${st.container}`;
 }
 function saveFf(patch) {
   const u = Object.assign(ffState(), patch);
@@ -614,7 +614,7 @@ const qc = $('queueCard');
 ['dragleave', 'drop'].forEach(ev => qc.addEventListener(ev, e => { e.preventDefault(); if (ev === 'drop' || !qc.contains(e.relatedTarget)) $('queue').classList.remove('over'); }));
 qc.addEventListener('drop', async e => {
   const files = [...e.dataTransfer.files].filter(f => /\.dem$/i.test(f.name));
-  if (!files.length) return toast('Seuls les fichiers .dem peuvent être ajoutés.');
+  if (!files.length) return toast('Only .dem files can be added.');
   for (const f of files) await fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', headers: { 'X-Token': token }, body: f });
   refresh();
 });

@@ -262,7 +262,7 @@ static bool StartFfmpeg(const std::wstring& args, HANDLE* in, HANDLE* proc)
 static std::string FfmpegLastLine()
 {
     FILE* f = _wfsopen(g_ffLog.c_str(), L"rb", _SH_DENYNO);
-    if (!f) return "ffmpeg a échoué";
+    if (!f) return "ffmpeg failed";
     std::string all;
     char buf[4096];
     size_t n;
@@ -280,7 +280,7 @@ static std::string FfmpegLastLine()
         if (!l.empty() && l.find("Guessed Channel Layout") == std::string::npos) return "ffmpeg : " + l.substr(0, 220);
         pos = e;
     }
-    return "ffmpeg a échoué";
+    return "ffmpeg failed";
 }
 
 static int WaitFfmpeg(HANDLE proc)
@@ -462,7 +462,7 @@ static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* outFile)
         swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s -an \"%s\"",
                    m->width, m->height, m->fps, m->ff_video_args, outFile);
     }
-    if (!StartFfmpeg(args, &f.in, &f.proc)) return Fail("impossible de lancer ffmpeg (%ls)", m->ffmpeg_path);
+    if (!StartFfmpeg(args, &f.in, &f.proc)) return Fail("cannot start ffmpeg (%ls)", m->ffmpeg_path);
     return 0;
 }
 
@@ -638,7 +638,7 @@ static int Run(unsigned id)
         HANDLE waits[2] = {semReady, game};
         for (;;) {
             DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-            if (w != WAIT_OBJECT_0) return Fail("le jeu s'est fermé pendant le rendu");
+            if (w != WAIT_OBJECT_0) return Fail("the game closed during the render");
             if (m->ended && frames >= m->total_frames) break;
             if (ff) {
                 if (EncodeFrameFF(v, f, frames, semFree)) {
@@ -699,7 +699,7 @@ static int Run(unsigned id)
             std::wstring keep = std::wstring(m->out_path) + L".mkv";
             DeleteFileW(m->out_path);
             MoveFileExW(videoPath, keep.c_str(), MOVEFILE_REPLACE_EXISTING);
-            return Fail("assemblage du son impossible (%s) ; vidéo sans son gardée en .mkv", why.c_str());
+            return Fail("cannot assemble the sound (%s); video kept without sound as .mkv", why.c_str());
         }
         DeleteFileW(videoPath);
         if (wav) DeleteFileW(m->wav_path);
