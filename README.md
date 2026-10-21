@@ -9,7 +9,7 @@ Nothing is installed in the game directory, and there are no console commands to
 
 ## Usage
 
-1. Launch `P2Render.exe`. Steam must be running, and Portal 2 must be closed.
+1. Launch `P2Render.exe`: the interface opens in your default browser. Steam must be running, and Portal 2 must be closed.
 2. Add demos: click **Add Demos**, or drag and drop `.dem` files into the list.
 3. Choose the resolution, frame rate, format, quality, and output folder for the videos.
 4. Click **Start Rendering**.

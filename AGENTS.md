@@ -34,7 +34,8 @@ Local setup of the development machine (not needed to build or use the project):
 ## Layout
 
 ```
-app/                  P2Render.exe (x64): local HTTP server + Edge --app window, queue, settings
+app/                  P2Render.exe (x64): local HTTP server opened in the default browser,
+                      queue, settings
   main.cpp            settings (<exe>\data\settings.ini, portable), Steam library lookup, demo
                       header parsing, job worker, native file dialogs, JSON API
   ui/index.html       the whole interface (vanilla HTML/CSS/JS, polls /api/state every 500 ms);
@@ -64,7 +65,7 @@ build.ps1             builds everything into dist/ (-Run, -CleanGame) + dist\por
 ## Build and test
 
 Visual Studio 18 (Community) is installed; no cmake/ninja/python/ffmpeg/.NET SDK. Node 24 is
-available. Edge (WebView) is on every Windows 10/11.
+available. The interface runs in the user's default browser (no embedded browser runtime).
 
 ```powershell
 cd "D:\OpenCode\Portal 2 D3D9Ex"
@@ -87,14 +88,16 @@ Invoke-RestMethod -Method Post "$b/api/start" -Headers $h -Body '{}'
 Invoke-RestMethod "$b/api/state" -Headers $h   # poll until running == false
 ```
 
-Open the same URL in the browser pane to see / click the interface (resize to 1240x820).
+Open the same URL in a browser tab to see / click the interface.
 `portal2\p2r_ref.dem` is a 12 s test demo recorded with the current build. Expect it `done` with 730
 frames in ~1.3 s, the MP4 in `dist\videos_out` (portable default; the setting can point anywhere),
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
 `a2_228.dem`) must fail fast with "the demo did not start". Check a video with
 `node tools/preview/serve.js` (copy the mp4 to `tools/preview/test.mp4`, then http://localhost:8765).
 
-API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|preview|quit-game`.
+API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|preview|quit-game|bye`.
+`/api/bye?t=<token>` is sent by the page on `pagehide` through `sendBeacon` (no header possible):
+the app quits 2 s later, so closing the tab closes P2Render.
 `POST /api/preview {id}` renders that demo **hidden** while ffmpeg writes an HLS stream into
 `<data>\stream` (served at `GET /stream/*`, played with hls.js in the interface), then remuxes it
 (`-c copy`) into the usual MP4 in the videos folder. The old "visible game window" mode is gone.
@@ -125,8 +128,9 @@ POC « visualisation en direct » (hors dépôt) : page + petit serveur node qui
    A8R8G8B8 textures (+ EVENT query), published to the encoder by semaphore. Demo over (not playing for
    10 frames) -> `endmovie`, cvars restored, `disconnect`, encoder told the frame count. The encoder
    finalizes, muxes the WAV (AAC 192k) into `<out>\<demo name>.mp4` and deletes the WAV.
-5. **Lifetime.** The app exits when its Edge window closes (or the page stops polling for 20 s while
-   idle); a running render is cancelled and the game closed.
+5. **Lifetime.** The page closes: `pagehide` sends `/api/bye`, the app quits 2 s later; a running
+   render is cancelled and the game closed. A poll timeout (2 min, 10 min headless) covers a crashed
+   browser.
 
 ## Status (2026-10-20)
 

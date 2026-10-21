@@ -1,5 +1,5 @@
 # Builds P2Render into dist\ with the Visual Studio 18 toolchain:
-#   P2Render.exe     (x64)  the application (local web interface in an Edge app window)
+#   P2Render.exe     (x64)  the application (local web interface in the default browser)
 #   p2r_launch.exe   (x86)  starts portal2.exe with p2r_core.dll loaded before main()
 #   p2r_core.dll     (x86)  injected into the game: D3D9Ex + GPU capture + job control
 #   p2r_encoder.exe  (x64)  D3D11 + Media Foundation hardware encoder, WAV mux
@@ -94,9 +94,9 @@ New-Item -ItemType Directory -Force (Join-Path $dist "ui") | Out-Null
 Copy-Item (Join-Path $root "app\ui\*") (Join-Path $dist "ui") -Recurse -Force
 
 # --- portable folder -----------------------------------------------------------------------
-# dist\portable: everything needed, data included (settings, imported demos, downloaded ffmpeg and
-# the Edge profile all live in portable\data), so the folder can be copied or zipped as is. No
-# installer, no registry, nothing in %LOCALAPPDATA%, nothing in the game folder.
+# dist\portable: everything needed, data included (settings, imported demos, downloaded ffmpeg all
+# live in portable\data), so the folder can be copied or zipped as is. No installer, no registry,
+# nothing in %LOCALAPPDATA%, nothing in the game folder.
 $portable = Join-Path $dist "portable"
 New-Item -ItemType Directory -Force (Join-Path $portable "ui"), (Join-Path $portable "data") | Out-Null
 Copy-Item (Join-Path $dist "P2Render.exe"), (Join-Path $dist "p2r_launch.exe"), (Join-Path $dist "p2r_core.dll"),
@@ -110,7 +110,7 @@ $readme = @(
     "3. Click Start rendering (the videos land in the videos_out folder next to this one)",
     "",
     "Portable build: nothing is installed. Everything the application writes stays in this folder",
-    "(the data subfolder: settings, imported demos, browser profile, ffmpeg downloaded if needed).",
+    "(the data subfolder: settings, imported demos, ffmpeg downloaded if needed).",
     "Move or copy the whole folder, it works as is.",
     "",
     "Nothing is installed inside Portal 2: the application starts the game and injects its module",
