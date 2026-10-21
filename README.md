@@ -39,9 +39,9 @@ build.cmd          :: builds devBuild\ (development) and P2Render\ (the folder t
 build.cmd -Run     :: builds and then launches P2Render\P2Render.exe
 ```
 
-`build.cmd` is a plain batch script: nothing to install, no PowerShell execution policy involved.
+`build.cmd` is a plain batch script: nothing to install.
 
-The `P2Render\` folder is the version to share: everything fits inside it (application, injected
+The `P2Render\` folder is the portalable version: everything fits inside it (application, injected
 module, encoder, interface, README) and the application only writes into `P2Render\data` (settings,
 imported demos, downloaded ffmpeg). Copy or zip the whole folder (`tar -a -c -f P2Render.zip
 P2Render`): it works as is, with no installation and nothing left anywhere else. `devBuild\` (with
