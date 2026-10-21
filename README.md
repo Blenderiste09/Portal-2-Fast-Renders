@@ -35,16 +35,17 @@ Including the time needed to launch Portal 2, two demos are rendered in approxim
 Visual Studio 2026 with the C++ toolsets (x86 and x64) is required.
 
 ```bat
-build.cmd          :: outputs dist\ (P2Render.exe and its files)
-build.cmd -Run     :: builds and then launches P2Render
+build.cmd          :: builds devBuild\ (development) and P2Render\ (the folder to hand out)
+build.cmd -Run     :: builds and then launches P2Render\P2Render.exe
 ```
 
 `build.cmd` is a plain batch script: nothing to install, no PowerShell execution policy involved.
 
-The `dist\portable\` folder is the version to share: everything fits inside it (application, injected
-module, encoder, interface) and the application only writes into `portable\data` (settings, imported
-demos, window profile, downloaded ffmpeg). Copy or zip the whole folder: it works as is, with no
-installation and nothing left anywhere else. `dist\` remains the development build.
+The `P2Render\` folder is the version to share: everything fits inside it (application, injected
+module, encoder, interface, README) and the application only writes into `P2Render\data` (settings,
+imported demos, downloaded ffmpeg). Copy or zip the whole folder (`tar -a -c -f P2Render.zip
+P2Render`): it works as is, with no installation and nothing left anywhere else. `devBuild\` (with
+the debug symbols) is what you run while working; `build\` only holds compiler work files.
 
 ## Logs for Troubleshooting
 

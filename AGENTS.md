@@ -59,7 +59,7 @@ encoder/encoder.cpp   p2r_encoder.exe (x64): D3D11 OpenSharedResource + Media Fo
 tools/preview/        node server (node tools/preview/serve.js, port 8765) + page to check a
                       rendered .mp4 in the browser pane
 re/                   notes.md (ALL RE findings), ghidra.ps1 + P2Query.java, projects/*.progname
-build.cmd             builds everything into dist/ (-Run, -CleanGame) + dist\portable\ (the folder to give)
+build.cmd             builds devBuild\ (development) and P2Render\ (the folder to hand out)
 ```
 
 ## Build and test
@@ -69,9 +69,9 @@ available. The interface runs in the user's default browser (no embedded browser
 
 ```bat
 cd /d "D:\OpenCode\Portal 2 D3D9Ex"
-build.cmd             :: dist\: P2Render.exe, p2r_launch.exe, p2r_core.dll(+pdb), p2r_encoder.exe, ui\
-                      ::       + dist\portable\: the whole application in one folder (data included)
-build.cmd -Run        :: and start it
+build.cmd             :: devBuild\: P2Render.exe, p2r_launch.exe, p2r_core.dll(+pdb), p2r_encoder.exe, ui\
+                      :: P2Render\: the same without the pdb, plus README.txt and an empty data\
+build.cmd -Run        :: and start P2Render\P2Render.exe
 build.cmd -CleanGame  :: remove the old d3d9.dll proxy (first versions) from <Portal 2>\bin
 ```
 
@@ -82,11 +82,11 @@ session kills the script.
 P2Render.exe must not be running when building (its files are locked).
 
 **End-to-end test without the window** (`--no-window`: server only, the URL with its token is the
-first line of `dist\p2render.log`; API calls need header `X-Token: <token>`):
+first line of `devBuild\p2render.log`; API calls need header `X-Token: <token>`):
 
 ```powershell
-Start-Process dist\P2Render.exe --no-window; Start-Sleep 2
-$u = (Get-Content dist\p2render.log -First 1) -replace '.*ui at ',''; $t = ($u -split 't=')[1]; $b = ($u -split '/\?')[0]; $h = @{"X-Token"=$t}
+Start-Process devBuild\P2Render.exe --no-window; Start-Sleep 2
+$u = (Get-Content devBuild\p2render.log -First 1) -replace '.*ui at ',''; $t = ($u -split 't=')[1]; $b = ($u -split '/\?')[0]; $h = @{"X-Token"=$t}
 Invoke-RestMethod -Method Post "$b/api/add-paths" -Headers $h -Body '{"paths":["E:\\...\\portal2\\p2r_ref.dem"]}'
 Invoke-RestMethod -Method Post "$b/api/start" -Headers $h -Body '{}'
 Invoke-RestMethod "$b/api/state" -Headers $h   # poll until running == false
@@ -94,7 +94,7 @@ Invoke-RestMethod "$b/api/state" -Headers $h   # poll until running == false
 
 Open the same URL in a browser tab to see / click the interface.
 `portal2\p2r_ref.dem` is a 12 s test demo recorded with the current build. Expect it `done` with 730
-frames in ~1.3 s, the MP4 in `dist\videos_out` (portable default; the setting can point anywhere),
+frames in ~1.3 s, the MP4 in `videos_out` next to the executable (the setting can point anywhere),
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
 `a2_228.dem`) must fail fast with "the demo did not start". Check a video with
 `node tools/preview/serve.js` (copy the mp4 to `tools/preview/test.mp4`, then http://localhost:8765).
@@ -114,7 +114,7 @@ POC « visualisation en direct » (hors dépôt) : page + petit serveur node qui
 
 ## How it works
 
-1. **Launch.** The app runs `p2r_launch.exe "<game>" "<dist>\p2r_core.dll" -game portal2 -novid -sw
+1. **Launch.** The app runs `p2r_launch.exe "<game>" "<exe dir>\p2r_core.dll" -game portal2 -novid -sw
    -noborder -w W -h H`. The core is loaded before main(); it waits for shaderapidx9.dll and redirects
    its `Direct3DCreate9` import to `Direct3DCreate9Ex`. **Do not inline-hook d3d9!Direct3DCreate9
    instead**: the Steam overlay hooks it and CreateDevice, gets the Ex device, and the game crashed

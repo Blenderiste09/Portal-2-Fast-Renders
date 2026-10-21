@@ -1,6 +1,8 @@
-# build output (rebuilt by build.cmd)
+# build output (rebuilt by build.cmd): compiler work files, development build, folder to hand out
 build/
-dist/
+devBuild/
+P2Render/
+P2Render.zip
 
 # reverse-engineering scratch: Ghidra dumps and the copied game dlls
 re/out/

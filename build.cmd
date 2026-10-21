@@ -1,5 +1,8 @@
 @echo off
-rem Builds P2Render into dist\ with the Visual Studio 18 toolchain:
+rem Builds P2Render with the Visual Studio 18 toolchain, into two folders:
+rem   devBuild\        the development build (debug symbols included): what you run while working
+rem   P2Render\        the application as users get it: copy or zip this folder as is
+rem
 rem   P2Render.exe     (x64)  the application (local web interface in the default browser)
 rem   p2r_launch.exe   (x86)  starts portal2.exe with p2r_core.dll loaded before main()
 rem   p2r_core.dll     (x86)  injected into the game: D3D9Ex + GPU capture + job control
@@ -7,8 +10,8 @@ rem   p2r_encoder.exe  (x64)  D3D11 + Media Foundation hardware encoder, WAV mux
 rem   ui\                     the interface (index.html, icon.svg)
 rem Nothing is installed in the game folder. P2Render.exe must not be running: its files are locked.
 rem
-rem   build.cmd                 build dist\ and dist\portable\
-rem   build.cmd -Run            build and start dist\portable\P2Render.exe
+rem   build.cmd                 build devBuild\ and P2Render\
+rem   build.cmd -Run            build and start P2Render\P2Render.exe
 rem   build.cmd -CleanGame      remove files older versions deployed into <Portal 2>\bin (d3d9.dll proxy)
 rem   build.cmd -GameDir "..."  Portal 2 folder used by -CleanGame
 rem
@@ -19,7 +22,8 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BUILD=%ROOT%\build"
-set "DIST=%ROOT%\dist"
+set "DEVB=%ROOT%\devBuild"
+set "P2R=%ROOT%\P2Render"
 set "GAMEDIR=E:\Program Files (x86)\Steam\steamapps\common\Portal 2"
 set "DO_RUN=0"
 set "DO_CLEAN=0"
@@ -41,7 +45,7 @@ goto parse
 :parsed
 if "%DO_CLEAN%"=="1" goto clean
 if not exist "%BUILD%" mkdir "%BUILD%"
-if not exist "%DIST%" mkdir "%DIST%"
+if not exist "%DEVB%" mkdir "%DEVB%"
 
 rem --- toolchain ---------------------------------------------------------------------------
 set "VCBUILD=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build"
@@ -126,30 +130,30 @@ set "ARGS=%COMMON% /DUNICODE /D_UNICODE "%ROOT%\launcher\launch.cpp" /Fe:p2r_lau
 call :compile
 if errorlevel 1 goto fail
 
-rem --- dist\ ---------------------------------------------------------------------------------
-if not exist "%DIST%\ui" mkdir "%DIST%\ui"
-copy /y "%BUILD%\core\p2r_core.dll" "%DIST%" >nul || goto copy_failed
-copy /y "%BUILD%\core\p2r_core.pdb" "%DIST%" >nul
-copy /y "%BUILD%\launch\p2r_launch.exe" "%DIST%" >nul || goto copy_failed
-copy /y "%BUILD%\encoder\p2r_encoder.exe" "%DIST%" >nul || goto copy_failed
-copy /y "%BUILD%\app\P2Render.exe" "%DIST%" >nul || goto copy_failed
-copy /y "%ROOT%\app\ui\*" "%DIST%\ui" >nul || goto copy_failed
+rem --- devBuild\ -----------------------------------------------------------------------------
+if not exist "%DEVB%\ui" mkdir "%DEVB%\ui"
+copy /y "%BUILD%\core\p2r_core.dll" "%DEVB%" >nul || goto copy_failed
+copy /y "%BUILD%\core\p2r_core.pdb" "%DEVB%" >nul
+copy /y "%BUILD%\launch\p2r_launch.exe" "%DEVB%" >nul || goto copy_failed
+copy /y "%BUILD%\encoder\p2r_encoder.exe" "%DEVB%" >nul || goto copy_failed
+copy /y "%BUILD%\app\P2Render.exe" "%DEVB%" >nul || goto copy_failed
+copy /y "%ROOT%\app\ui\*" "%DEVB%\ui" >nul || goto copy_failed
 
-rem --- portable folder ---------------------------------------------------------------------
-rem dist\portable: everything needed, data included (settings, imported demos and downloaded
-rem ffmpeg all live in portable\data), so the folder can be copied or zipped as is. No installer,
-rem no registry, nothing in %LOCALAPPDATA%, nothing in the game folder.
-set "PORTABLE=%DIST%\portable"
-if not exist "%PORTABLE%\ui" mkdir "%PORTABLE%\ui"
-if not exist "%PORTABLE%\data" mkdir "%PORTABLE%\data"
-copy /y "%DIST%\P2Render.exe" "%PORTABLE%" >nul || goto copy_failed
-copy /y "%DIST%\p2r_launch.exe" "%PORTABLE%" >nul || goto copy_failed
-copy /y "%DIST%\p2r_core.dll" "%PORTABLE%" >nul || goto copy_failed
-copy /y "%DIST%\p2r_encoder.exe" "%PORTABLE%" >nul || goto copy_failed
-copy /y "%DIST%\ui\*" "%PORTABLE%\ui" >nul || goto copy_failed
-if exist "%PORTABLE%\LISEZ-MOI.txt" del /f /q "%PORTABLE%\LISEZ-MOI.txt"
+rem --- P2Render\ (the folder users get) ------------------------------------------------------
+rem Everything is inside: application, injected module, encoder, interface, README. Settings,
+rem imported demos and the downloaded ffmpeg stay in its data\ folder, so a copy of the whole
+rem folder works anywhere: no installer, no registry, nothing in %LOCALAPPDATA%, nothing in the
+rem game folder.
+if not exist "%P2R%\ui" mkdir "%P2R%\ui"
+if not exist "%P2R%\data" mkdir "%P2R%\data"
+copy /y "%DEVB%\P2Render.exe" "%P2R%" >nul || goto copy_failed
+copy /y "%DEVB%\p2r_launch.exe" "%P2R%" >nul || goto copy_failed
+copy /y "%DEVB%\p2r_core.dll" "%P2R%" >nul || goto copy_failed
+copy /y "%DEVB%\p2r_encoder.exe" "%P2R%" >nul || goto copy_failed
+copy /y "%DEVB%\ui\*" "%P2R%\ui" >nul || goto copy_failed
+if exist "%P2R%\LISEZ-MOI.txt" del /f /q "%P2R%\LISEZ-MOI.txt"
 
-set "PORT_README=%PORTABLE%\README.txt"
+set "PORT_README=%P2R%\README.txt"
 > "%PORT_README%" echo P2Render - fast rendering of Portal 2 demos
 >> "%PORT_README%" echo.
 >> "%PORT_README%" echo 1. Double-click P2Render.exe
@@ -165,9 +169,9 @@ set "PORT_README=%PORTABLE%\README.txt"
 >> "%PORT_README%" echo.
 >> "%PORT_README%" echo If Portal 2 is not found ^(Steam installation elsewhere^), set its folder in the settings.
 
-echo built %DIST%
-echo portable: %PORTABLE% (copy or zip the whole folder)
-if "%DO_RUN%"=="1" start "" "%PORTABLE%\P2Render.exe"
+echo built %DEVB% (development)
+echo folder to give: %P2R% (copy or zip it as is)
+if "%DO_RUN%"=="1" start "" "%P2R%\P2Render.exe"
 exit /b 0
 
 :clean
@@ -205,7 +209,7 @@ echo error: Visual Studio 18 C++ tools not found ^(vswhere or VC\Auxiliary\Build
 exit /b 1
 
 :copy_failed
-echo error: copy into dist failed - is P2Render.exe still running?
+echo error: copy into devBuild failed - is P2Render.exe still running?
 exit /b 1
 
 :fail
