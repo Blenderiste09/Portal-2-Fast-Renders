@@ -1,52 +1,51 @@
-# P2Render : rendu ultra-rapide de démos Portal 2
+# P2Render: Ultra-Fast Portal 2 Demo Rendering
 
-P2Render est une application indépendante qui transforme des démos Portal 2 en vidéos MP4 (H.264 ou
-HEVC, avec le son) beaucoup plus vite que `startmovie`. Les images ne passent jamais par le
-processeur : le jeu tourne en Direct3D 9Ex, chaque image est copiée sur la carte graphique dans une
-texture partagée, puis encodée par l'encodeur matériel de la carte (NVENC / AMF / QuickSync).
+**I wanted to use the technology SourceDemoRender (https://github.com/crashfort/SourceDemoRender) uses to render demos super fast in other source game. Problem : Those games use D3D9Ex which supports GPU texture sharing, and Portal 2 uses D3D9 which doesn't.
+This project is a proof of concept. It redirects the game's Direct3DCreate9 import to Direct3DCreate9Ex and adapts the CreateDevice call to CreateDeviceEx, without touching the game folder. That gives access to texture sharing, making the rendered frames accessible from an external process.**
 
-Rien n'est installé dans le dossier du jeu et il n'y a aucune commande à taper dans la console.
+P2Render is a standalone application that converts Portal 2 demos into MP4 videos (H.264 or HEVC, with audio) much faster than `startmovie`. Frames never pass through the CPU: the game runs in Direct3D 9Ex, each frame is copied to a shared texture on the GPU, then encoded by the GPU's hardware encoder (NVENC / AMF / QuickSync).
 
-## Utilisation
+Nothing is installed in the game directory, and there are no console commands to type.
 
-1. Lancer `P2Render.exe`. Steam doit être ouvert, et Portal 2 doit être fermé.
-2. Ajouter des démos : bouton **Ajouter des démos**, ou glisser des fichiers `.dem` dans la liste.
-3. Choisir la résolution, les images par seconde, le format, la qualité et le dossier des vidéos.
-4. Cliquer sur **Lancer le rendu**.
+## Usage
 
-P2Render démarre Portal 2, rend les démos l'une après l'autre (progression, vitesse et temps
-restant affichés), puis ferme le jeu si l'option est cochée. Une fois une démo terminée, ses
-boutons permettent de lire la vidéo ou de l'afficher dans son dossier.
+1. Launch `P2Render.exe`. Steam must be running, and Portal 2 must be closed.
+2. Add demos: click **Add Demos**, or drag and drop `.dem` files into the list.
+3. Choose the resolution, frame rate, format, quality, and output folder for the videos.
+4. Click **Start Rendering**.
 
-## Vitesse
+Alternatively, you can click on the camera icon next to a demo to see the video **while** it's rendered. You have to enable advanced settings and download ffmpeg to use this feature.
 
-Mesures sur un Ryzen 7 5700X avec une carte NVIDIA, sur une démo de 12,2 s à 60 images/s :
+P2Render launches Portal 2 and renders the demos one after another (with progress, speed, and estimated time remaining displayed), then closes the game if the corresponding option is checked. Once a demo is finished, its buttons let you play the video or open its containing folder.
 
-| Méthode | Vitesse |
+## Speed
+
+Measurements on a Ryzen 7 5700X with an NVIDIA GPU, using a 12.2-second demo at 60 FPS:
+
+| Method | Speed |
 |---|---|
-| `startmovie` du jeu (images TGA, à encoder ensuite) | ~126 images/s |
-| P2Render en 720p | ~570 images/s (9x le temps réel) |
-| P2Render en 1080p | ~540 images/s |
+| In-game `startmovie` (TGA frames, requiring subsequent encoding) | ~126 FPS |
+| P2Render at 720p | ~570 FPS (9x real-time) |
+| P2Render at 1080p | ~540 FPS |
 
-En comptant le lancement de Portal 2, 2 démos sont rendues en 12 s environ.
+Including the time needed to launch Portal 2, two demos are rendered in approximately 12 seconds.
 
-## Compiler
+## Building
 
-Il faut Visual Studio 2026 avec les outils C++ (x86 et x64).
+Visual Studio 2026 with the C++ toolsets (x86 and x64) is required.
 
 ```powershell
-.\build.ps1          # produit dist\ (P2Render.exe et ses fichiers)
-.\build.ps1 -Run     # compile puis lance P2Render
+.\build.ps1          # outputs dist\ (P2Render.exe and its files)
+.\build.ps1 -Run     # builds and then launches P2Render
 ```
 
-Le dossier `dist\` se copie tel quel où l'on veut.
+The `dist\` directory can be copied as-is to any location.
 
-## Journaux en cas de problème
+## Logs for Troubleshooting
 
-Ils sont dans le dossier de P2Render :
-- `p2render.log` (application) ;
-- `p2r_core.log` (côté jeu) ;
-- `p2r_encoder.log` (encodeur).
+The logs are located in the P2Render directory:
+- `p2render.log` (application);
+- `p2r_core.log` (game-side component);
+- `p2r_encoder.log` (encoder).
 
-Les démos enregistrées avant la mise à jour 2026 du jeu ne se lisent plus (erreur `DataTable` du jeu) :
-P2Render les signale comme incompatibles.
+Demos recorded before the game's 2026 update can no longer be played back (the game reports a `DataTable` error). P2Render flags them as incompatible. Might work on compatibility later, this is a proof of concept project
