@@ -140,6 +140,17 @@ static wstring KnownFolder(REFKNOWNFOLDERID id)
 
 static bool FileExists(const wstring& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
 
+// Portable install: can we write next to the application?
+static bool DirWritable(const wstring& dir)
+{
+    wstring probe = dir + L"\\.write-test";
+    HANDLE h = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(h);
+    DeleteFileW(probe.c_str());
+    return true;
+}
+
 static wstring FileName(const wstring& p)
 {
     size_t s = p.find_last_of(L"\\/");
@@ -177,7 +188,6 @@ struct Settings {
     string quality = "high";     // standard | high | max
     wstring outDir;
     wstring gameDir;             // empty = found through Steam
-    bool showWindow = false;     // false = invisible rendering (game window hidden, game sound muted)
     bool closeGame = true;
     // Advanced mode: encode with ffmpeg (the interface builds the arguments).
     bool advanced = false;
@@ -202,10 +212,13 @@ static wstring IniGet(const wchar_t* key, const wstring& def)
 }
 static void IniSet(const wchar_t* key, const wstring& v) { WritePrivateProfileStringW(L"p2render", key, v.c_str(), IniPath().c_str()); }
 
+static bool g_portable;   // data (and the videos) live next to the application
+
 static void LoadSettings()
 {
     Settings s;
-    s.outDir = KnownFolder(FOLDERID_Videos) + L"\\P2Render";
+    // Portable: the videos go to videos_out, next to the application.
+    s.outDir = (g_portable ? ExeDir() : g_dataDir + L"\\") + L"videos_out";
     s.width = _wtoi(IniGet(L"width", L"1920").c_str());
     s.height = _wtoi(IniGet(L"height", L"1080").c_str());
     s.fps = _wtoi(IniGet(L"fps", L"60").c_str());
@@ -213,7 +226,6 @@ static void LoadSettings()
     s.quality = Narrow(IniGet(L"quality", L"high"));
     s.outDir = IniGet(L"outDir", s.outDir);
     s.gameDir = IniGet(L"gameDir", L"");
-    s.showWindow = IniGet(L"showWindow", L"0") == L"1";
     s.closeGame = IniGet(L"closeGame", L"1") == L"1";
     s.advanced = IniGet(L"advanced", L"0") == L"1";
     s.ffmpegPath = IniGet(L"ffmpegPath", L"");
@@ -236,7 +248,6 @@ static void SaveSettings()
     IniSet(L"quality", Widen(s.quality));
     IniSet(L"outDir", s.outDir);
     IniSet(L"gameDir", s.gameDir);
-    IniSet(L"showWindow", s.showWindow ? L"1" : L"0");
     IniSet(L"closeGame", s.closeGame ? L"1" : L"0");
     IniSet(L"advanced", s.advanced ? L"1" : L"0");
     IniSet(L"ffmpegPath", s.ffmpegPath);
@@ -297,7 +308,6 @@ static wstring GameDir()
 
 // ---------------------------------------------------------------------------------------------
 // ffmpeg (advanced mode): chosen path, else the copy P2Render downloaded, else PATH.
-
 static wstring FindFileUnder(const wstring& dir, const wchar_t* name, int depth)
 {
     if (FileExists(dir + L"\\" + name)) return dir + L"\\" + name;
@@ -376,6 +386,48 @@ static bool RunAndWait(const wstring& cmd, DWORD timeoutMs)
     return code == 0;
 }
 
+// Is the GPU H.264 encoder usable? Probed once: h264_nvenc needs a recent driver, libx264 always
+// works but is slower (the render waits for it).
+static bool NvencUsable(const wstring& ffmpeg)
+{
+    static int cached = -1; // -1 unknown, 0 no, 1 yes
+    if (cached < 0) {
+        wstring cmd = L"\"" + ffmpeg + L"\" -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x240:rate=30 "
+                                  L"-frames:v 2 -c:v h264_nvenc -f null -";
+        cached = RunAndWait(cmd, 30000) ? 1 : 0;
+        Log("live preview: %s encoder", cached ? "h264_nvenc" : "libx264 (no nvenc)");
+    }
+    return cached == 1;
+}
+
+// ffmpeg output options of the live stream: HLS playlist + 2 s segments, exactly what hls.js needs
+// to play a file that is still being written.
+static wstring StreamArgs(const Settings& s, const wstring& ffmpeg, const wstring& dir)
+{
+    bool nv = NvencUsable(ffmpeg);
+    wstring v;
+    if (s.codec == "hevc")
+        v = nv ? L"-c:v hevc_nvenc -preset p5 -tune hq -rc vbr -cq 22 -b:v 0 -pix_fmt yuv420p"
+               : L"-c:v libx265 -preset veryfast -crf 22 -pix_fmt yuv420p";
+    else
+        v = nv ? L"-c:v h264_nvenc -preset p5 -tune hq -rc vbr -cq 21 -b:v 0 -pix_fmt yuv420p"
+               : L"-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p";
+    return v + L" -c:a aac -b:a 192k -f hls -hls_time 2 -hls_list_size 0 -hls_playlist_type event "
+               L"-hls_flags independent_segments+temp_file -hls_segment_filename \"" + dir + L"\\seg%05d.ts\"";
+}
+
+// Removes the files a previous live preview left in its folder.
+static void ClearStreamDir(const wstring& dir)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) DeleteFileW((dir + L"\\" + fd.cFileName).c_str());
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
 // Downloads the latest release build of ffmpeg (BtbN, win64, GPL, shared libraries ~85 MB) into
 // %LOCALAPPDATA%\P2Render\ffmpeg and extracts it with Windows' tar.
 static void DownloadFfmpeg()
@@ -419,7 +471,7 @@ static void DownloadFfmpeg()
     Log("ffmpeg download: %s", url.c_str());
     DownloadProgress progress;
     HRESULT hr = URLDownloadToFileW(nullptr, Widen(url).c_str(), zip.c_str(), 0, &progress);
-    if (FAILED(hr)) return fail("téléchargement impossible (pas de connexion ?)");
+    if (FAILED(hr)) return fail("download failed (no connection?)");
     {
         std::lock_guard<std::mutex> l(g_mx);
         g_ffdl.percent = 92;
@@ -429,7 +481,7 @@ static void DownloadFfmpeg()
     GetSystemDirectoryW(sys, MAX_PATH);
     bool ok = RunAndWait(L"\"" + wstring(sys) + L"\\tar.exe\" -xf \"" + zip + L"\" -C \"" + dir + L"\"", 300000);
     DeleteFileW(zip.c_str());
-    if (!ok || FindFileUnder(dir, L"ffmpeg.exe", 3).empty()) return fail("extraction de l'archive impossible");
+    if (!ok || FindFileUnder(dir, L"ffmpeg.exe", 3).empty()) return fail("cannot extract the archive");
     std::lock_guard<std::mutex> l(g_mx);
     g_ffdl.running = false;
     g_ffdl.percent = 100;
@@ -437,9 +489,10 @@ static void DownloadFfmpeg()
     Log("ffmpeg ready: %s", Narrow(FfmpegPath()).c_str());
 }
 
-// Mutes the game in the Windows mixer (invisible rendering): only its output, the engine still
-// mixes the sound that goes into the video.
-static void MuteProcessAudio(DWORD pid)
+// Mutes (or restores) the game in the Windows mixer: invisible rendering must not be heard, but the
+// engine still mixes the sound that goes into the video. Windows remembers a per-app mute, so the
+// game has to be unmuted before it goes away, otherwise a later normal launch stays silent.
+static void MuteProcessAudio(DWORD pid, bool mute)
 {
     IMMDeviceEnumerator* en = nullptr;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en)))) return;
@@ -461,7 +514,7 @@ static void MuteProcessAudio(DWORD pid)
                         if (SUCCEEDED(c->QueryInterface(IID_PPV_ARGS(&vol)))) {
                             BOOL muted = FALSE;
                             vol->GetMute(&muted);
-                            if (!muted) vol->SetMute(TRUE, nullptr);
+                            if (!!muted != mute) vol->SetMute(mute, nullptr);
                             vol->Release();
                         }
                     }
@@ -538,10 +591,24 @@ static std::vector<Item> g_items;
 static int g_nextId = 1;
 static bool g_running;
 static std::atomic<bool> g_cancel;
-static string g_status = "Prêt";      // one line under the queue
+static string g_status = "Ready";      // one line under the queue
 static string g_gameState = "stopped"; // stopped | starting | ready | busy
 static DWORD g_gamePid;
 static std::atomic<DWORD> g_lastPoll;
+
+// Live preview: one demo rendered hidden while ffmpeg writes a stream (HLS) that the interface
+// plays. Started from the interface (/api/preview, the app builds the ffmpeg arguments) or by the
+// streaming POC (/api/visualise, which brings its own).
+struct StreamSpec {
+    bool active = false;
+    int id = 0;              // item id this applies to
+    int width = 1280, height = 720, fps = 60;
+    wstring dir, out;        // output folder + name of the stream file (playlist or .mp4)
+    wstring ffmpegPath;      // empty = auto
+    wstring ffArgs;          // ffmpeg output options (encoders + muxer)
+    wstring finalPath;       // empty = no remux; else the MP4 assembled from the stream at the end
+};
+static StreamSpec g_stream;  // guarded by g_mx
 
 static Item* FindItem(int id)
 {
@@ -558,7 +625,7 @@ static void AddDemo(const wstring& path)
     it.info = ReadDemo(path);
     if (!it.info.ok) {
         it.state = ItemState::Failed;
-        it.message = "ce fichier n'est pas une démo Source";
+        it.message = "this file is not a Source demo";
     }
     g_items.push_back(it);
 }
@@ -570,7 +637,6 @@ static HANDLE g_gameProc;
 static HANDLE g_ctrlMap;
 static P2RControl* g_ctrl;
 static int g_sessionW, g_sessionH;
-static bool g_sessionHidden;
 
 static bool GameAlive() { return g_gameProc && WaitForSingleObject(g_gameProc, 0) == WAIT_TIMEOUT; }
 
@@ -603,15 +669,15 @@ static void SetStatus(const string& s)
 }
 
 // Runs p2r_launch.exe and waits for the core to be ready. Called from the worker thread.
-static bool StartGame(int w, int h, bool hidden, string& err)
+static bool StartGame(int w, int h, string& err)
 {
     wstring game = GameDir();
     if (game.empty()) {
-        err = "Portal 2 introuvable : indique son dossier dans les réglages";
+        err = "Portal 2 not found: set its folder in the settings";
         return false;
     }
     if (OtherPortal2Running()) {
-        err = "Portal 2 est déjà ouvert : ferme-le, P2Render le lance lui-même";
+        err = "Portal 2 is already running: close it, P2Render starts it itself";
         return false;
     }
     wstring dir = ExeDir();
@@ -619,7 +685,7 @@ static bool StartGame(int w, int h, bool hidden, string& err)
                   std::to_wstring(w) + L" -h " + std::to_wstring(h);
     Log("launch: %s", Narrow(cmd).c_str());
     // Inherited by p2r_launch.exe and the game: start hidden, keep the window hidden (core).
-    SetEnvironmentVariableW(L"P2R_HIDDEN", hidden ? L"1" : L"0");
+    SetEnvironmentVariableW(L"P2R_HIDDEN", L"1"); // the game always renders hidden; the sound stays in the video
     SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
     HANDLE rd, wr;
     CreatePipe(&rd, &wr, &sa, 0);
@@ -634,7 +700,7 @@ static bool StartGame(int w, int h, bool hidden, string& err)
     if (!CreateProcessW(nullptr, cl.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, dir.c_str(), &si, &pi)) {
         CloseHandle(rd);
         CloseHandle(wr);
-        err = "p2r_launch.exe n'a pas pu démarrer";
+        err = "p2r_launch.exe could not start";
         return false;
     }
     CloseHandle(wr);
@@ -651,14 +717,13 @@ static bool StartGame(int w, int h, bool hidden, string& err)
     Log("launch exit %lu: %s", code, out.c_str());
     DWORD pid = 0;
     if (code != 0 || sscanf_s(out.c_str(), "pid %lu", &pid) != 1) {
-        err = "le lancement de Portal 2 a échoué : " + out;
+        err = "starting Portal 2 failed: " + out;
         return false;
     }
     g_gamePid = pid;
     g_gameProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, pid);
     g_sessionW = w;
     g_sessionH = h;
-    g_sessionHidden = hidden;
 
     // Wait for the control block.
     wchar_t name[64];
@@ -666,38 +731,39 @@ static bool StartGame(int w, int h, bool hidden, string& err)
     DWORD t0 = GetTickCount();
     while (GetTickCount() - t0 < 180000) {
         if (g_cancel) {
-            err = "annulé";
+            err = "cancelled";
             return false;
         }
         if (!GameAlive()) {
-            err = "Portal 2 s'est fermé pendant le démarrage";
+            err = "Portal 2 closed while starting";
             return false;
         }
-        if (hidden) MuteProcessAudio(pid);
+        MuteProcessAudio(pid, true); // invisible rendering: never heard, the engine still mixes into the video
         if (!g_ctrl) {
             g_ctrlMap = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name);
             if (g_ctrlMap) g_ctrl = (P2RControl*)MapViewOfFile(g_ctrlMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(P2RControl));
         }
         if (g_ctrl && g_ctrl->magic == P2R_CTRL_MAGIC) {
             if (g_ctrl->version != P2R_CTRL_VERSION) {
-                err = "versions de P2Render incohérentes";
+                err = "P2Render versions do not match";
                 return false;
             }
             if (g_ctrl->core_state == CORE_READY) return true;
             if (g_ctrl->core_state == CORE_BROKEN) {
-                err = string("Portal 2 ne peut pas faire le rendu : ") + g_ctrl->core_message;
+                err = string("Portal 2 cannot render: ") + g_ctrl->core_message;
                 return false;
             }
         }
         Sleep(100);
     }
-    err = "Portal 2 n'a pas fini de démarrer à temps";
+    err = "Portal 2 did not finish starting in time";
     return false;
 }
 
 static void QuitGame()
 {
     if (g_ctrl && GameAlive()) {
+        MuteProcessAudio(g_gamePid, false); // leave the game audible for its next, normal launch
         g_ctrl->cmd = CMD_QUIT;
         MemoryBarrier();
         ++g_ctrl->cmd_seq;
@@ -725,6 +791,7 @@ static wstring UniqueOutput(const wstring& dir, const wstring& base, const wstri
 static bool RenderItem(int id)
 {
     Settings s;
+    StreamSpec stream;
     wstring src;
     {
         std::lock_guard<std::mutex> l(g_mx);
@@ -732,6 +799,12 @@ static bool RenderItem(int id)
         Item* it = FindItem(id);
         if (!it) return true;
         src = it->path;
+        if (g_stream.active && g_stream.id == id) {
+            stream = g_stream;
+            s.width = stream.width;
+            s.height = stream.height;
+            s.fps = stream.fps;
+        }
         it->state = ItemState::Loading;
         it->frames = it->encoded = it->renderMs = 0;
         it->expected = (int)(it->info.seconds * s.fps + 0.5f);
@@ -746,17 +819,17 @@ static bool RenderItem(int id)
         }
     };
 
-    bool hidden = !s.showWindow;
-    if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height || g_sessionHidden != hidden))
+    if (g_ctrl && GameAlive() && (g_sessionW != s.width || g_sessionH != s.height))
         QuitGame(); // new resolution or display mode
     wstring ffmpeg;
-    if (s.advanced) {
+    if (s.advanced || stream.active) {
         {
             std::lock_guard<std::mutex> l(g_mx);
-            ffmpeg = FfmpegPath();
+            ffmpeg = stream.active && !stream.ffmpegPath.empty() ? stream.ffmpegPath : FfmpegPath();
         }
         if (ffmpeg.empty()) {
-            finish(ItemState::Failed, "mode avancé : ffmpeg introuvable (télécharge-le ou choisis ffmpeg.exe dans les réglages)");
+            finish(ItemState::Failed, stream.active ? "ffmpeg not found (the stream cannot be written)"
+                                                    : "advanced mode: ffmpeg not found (download it or pick ffmpeg.exe in the settings)");
             return true;
         }
     }
@@ -765,11 +838,14 @@ static bool RenderItem(int id)
         {
             std::lock_guard<std::mutex> l(g_mx);
             g_gameState = "starting";
-            g_status = "Démarrage de Portal 2…";
+            g_status = "Starting Portal 2…";
         }
         string err;
-        if (!StartGame(s.width, s.height, hidden, err)) {
-            if (GameAlive()) TerminateProcess(g_gameProc, 1);
+        if (!StartGame(s.width, s.height, err)) {
+            if (GameAlive()) {
+                MuteProcessAudio(g_gamePid, false); // don't leave the game silent for its next launch
+                TerminateProcess(g_gameProc, 1);
+            }
             CloseSession();
             finish(g_cancel ? ItemState::Cancelled : ItemState::Failed, err);
             SetStatus(err);
@@ -779,7 +855,7 @@ static bool RenderItem(int id)
     {
         std::lock_guard<std::mutex> l(g_mx);
         g_gameState = "busy";
-        g_status = "Rendu en cours";
+        g_status = "Rendering";
     }
 
     // The engine plays demos from the game folder: copy it there for the time of the render.
@@ -788,12 +864,18 @@ static bool RenderItem(int id)
     CreateDirectoryW(tmpDir.c_str(), nullptr);
     wstring tmpDemo = tmpDir + L"\\demo" + std::to_wstring(id) + L".dem";
     if (!CopyFileW(src.c_str(), tmpDemo.c_str(), FALSE)) {
-        finish(ItemState::Failed, "impossible de copier la démo dans le dossier du jeu");
+        finish(ItemState::Failed, "cannot copy the demo into the game folder");
         return true;
     }
-    CreateDirectoryW(s.outDir.c_str(), nullptr);
-    SHCreateDirectoryExW(nullptr, s.outDir.c_str(), nullptr);
-    wstring out = UniqueOutput(s.outDir, StripExt(FileName(src)), s.advanced ? Widen(s.container) : L"mp4");
+    wstring out;
+    if (stream.active) {
+        SHCreateDirectoryExW(nullptr, stream.dir.c_str(), nullptr);
+        out = stream.dir + L"\\" + stream.out;
+    } else {
+        CreateDirectoryW(s.outDir.c_str(), nullptr);
+        SHCreateDirectoryExW(nullptr, s.outDir.c_str(), nullptr);
+        out = UniqueOutput(s.outDir, StripExt(FileName(src)), s.advanced ? Widen(s.container) : L"mp4");
+    }
 
     P2RJob job = {};
     sprintf_s(job.demo, "p2render_tmp/demo%d", id);
@@ -801,8 +883,13 @@ static bool RenderItem(int id)
     job.fps = s.fps;
     job.codec = s.codec == "hevc" ? P2R_HEVC : P2R_H264;
     job.bitrate_kbps = Bitrate(s);
-    job.show_window = s.showWindow;
-    if (s.advanced) {
+    job.show_window = 0; // never present while rendering: faster
+    if (stream.active) {
+        job.use_ffmpeg = 1;
+        job.stream = 1;
+        wcscpy_s(job.ffmpeg_path, ffmpeg.c_str());
+        wcsncpy_s(job.ff_video_args, stream.ffArgs.c_str(), _TRUNCATE);
+    } else if (s.advanced) {
         job.use_ffmpeg = 1;
         wcscpy_s(job.ffmpeg_path, ffmpeg.c_str());
         wcsncpy_s(job.ff_video_args, Widen(s.ffVideo).c_str(), _TRUNCATE);
@@ -818,12 +905,12 @@ static bool RenderItem(int id)
     DWORD lastMute = 0;
     for (;;) {
         Sleep(100);
-        if (hidden && GetTickCount() - lastMute > 1000) {
-            MuteProcessAudio(g_gamePid);
+        if (GetTickCount() - lastMute > 1000) {
+            MuteProcessAudio(g_gamePid, true);
             lastMute = GetTickCount();
         }
         if (!GameAlive()) {
-            finish(ItemState::Failed, "Portal 2 s'est fermé pendant le rendu");
+            finish(ItemState::Failed, "Portal 2 closed during the render");
             sessionOk = false;
             break;
         }
@@ -848,11 +935,29 @@ static bool RenderItem(int id)
             }
         }
         if (js == JOB_DONE) {
-            finish(ItemState::Done, "", out);
+            wstring final = out;
+            if (stream.active && !stream.finalPath.empty()) {
+                // The stream we just watched is the video: assemble the usual MP4 from it (copy, no
+                // re-encoding) so a preview also leaves a file in the videos folder.
+                SetStatus("Assembling the video…");
+                wstring playlist = stream.dir + L"\\" + stream.out;
+                wstring cmd = L"\"" + ffmpeg + L"\" -hide_banner -loglevel error -y -i \"" + playlist + L"\" -c copy "
+                                           L"-movflags +faststart \"" + stream.finalPath + L"\"";
+                DWORD t0 = GetTickCount();
+                if (RunAndWait(cmd, 1800000) && FileExists(stream.finalPath)) {
+                    Log("preview remux in %.1f s: %s", (GetTickCount() - t0) / 1000.0, Narrow(stream.finalPath).c_str());
+                    final = stream.finalPath;
+                } else {
+                    Log("preview remux failed, the stream stays in %s", Narrow(stream.dir).c_str());
+                    finish(ItemState::Failed, "cannot assemble the video (the stream stays in data\\stream)");
+                    break;
+                }
+            }
+            finish(ItemState::Done, "", final);
             break;
         }
         if (js == JOB_FAILED) {
-            finish(cancelSent ? ItemState::Cancelled : ItemState::Failed, cancelSent ? "annulé" : g_ctrl->job_message);
+            finish(cancelSent ? ItemState::Cancelled : ItemState::Failed, cancelSent ? "cancelled" : g_ctrl->job_message);
             break;
         }
     }
@@ -894,7 +999,7 @@ static void Worker()
     if (close) QuitGame();
     std::lock_guard<std::mutex> l(g_mx);
     if (g_cancel) {
-        g_status = "Rendu annulé";
+        g_status = "Render cancelled";
     } else {
         int done = 0, failed = 0;
         for (Item& i : g_items) {
@@ -902,7 +1007,7 @@ static void Worker()
             if (i.state == ItemState::Failed) ++failed;
         }
         if (g_status.rfind("Portal 2", 0) != 0 && g_status.rfind("le lancement", 0) != 0)
-            g_status = failed ? "Terminé avec des erreurs" : "Terminé";
+            g_status = failed ? "Finished with errors" : "Finished";
     }
     g_gameState = GameAlive() ? "ready" : "stopped";
     g_running = false;
@@ -929,7 +1034,7 @@ static std::vector<wstring> PickFiles(bool folder, const wstring& title, bool ex
                 dlg->SetFileTypes(2, spec);
             } else {
                 opt |= FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST;
-                COMDLG_FILTERSPEC spec[] = {{L"Démos Portal 2", L"*.dem"}, {L"Tous les fichiers", L"*.*"}};
+                COMDLG_FILTERSPEC spec[] = {{L"Portal 2 demos", L"*.dem"}, {L"All files", L"*.*"}};
                 dlg->SetFileTypes(2, spec);
                 wstring def = GameDir() + L"\\portal2";
                 IShellItem* si = nullptr;
@@ -1007,7 +1112,7 @@ static string StateJson()
     j += "\"game\":{\"path\":" + Q(game) + ",\"found\":" + (game.empty() ? "false" : "true") + ",\"state\":" + Q(g_gameState) + "},";
     j += "\"settings\":{\"width\":" + std::to_string(s.width) + ",\"height\":" + std::to_string(s.height) +
          ",\"fps\":" + std::to_string(s.fps) + ",\"codec\":" + Q(s.codec) + ",\"quality\":" + Q(s.quality) +
-         ",\"outDir\":" + Q(s.outDir) + ",\"gameDir\":" + Q(s.gameDir) + ",\"showWindow\":" + (s.showWindow ? "true" : "false") +
+         ",\"outDir\":" + Q(s.outDir) + ",\"gameDir\":" + Q(s.gameDir) +
          ",\"closeGame\":" + (s.closeGame ? "true" : "false") + ",\"bitrate\":" + std::to_string(Bitrate(s)) +
          ",\"advanced\":" + (s.advanced ? "true" : "false") + ",\"ffmpegPath\":" + Q(s.ffmpegPath) + ",\"container\":" + Q(s.container) +
          ",\"ffVideo\":" + Q(s.ffVideo) + ",\"ffAudio\":" + Q(s.ffAudio) + ",\"ffUi\":" + Q(s.ffUi) + "},";
@@ -1023,7 +1128,8 @@ static string StateJson()
              ",\"map\":" + Q(i.info.map) + ",\"seconds\":" + std::to_string(i.info.seconds) + ",\"state\":" + Q(StateName(i.state)) +
              ",\"frames\":" + std::to_string(i.frames) + ",\"expected\":" + std::to_string(i.expected) +
              ",\"encoded\":" + std::to_string(i.encoded) + ",\"renderMs\":" + std::to_string(i.renderMs) +
-             ",\"message\":" + Q(i.message) + ",\"output\":" + Q(i.output) + "}";
+             ",\"message\":" + Q(i.message) + ",\"output\":" + Q(i.output) +
+             ",\"preview\":" + (g_stream.active && g_stream.id == i.id ? "true" : "false") + "}";
     }
     j += "]}";
     return j;
@@ -1033,6 +1139,28 @@ static string Handle(const Request& r, int& code, const char*& type)
 {
     code = 200;
     type = "application/json; charset=utf-8";
+    if (r.path.rfind("/stream/", 0) == 0) {
+        // Live preview stream (HLS playlist and segments written by ffmpeg in <data>\stream).
+        string name = r.path.substr(8);
+        if (name.empty() || name.find("..") != string::npos || name.find('/') != string::npos || name.find('\\') != string::npos) {
+            code = 404;
+            return "";
+        }
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (g_dataDir + L"\\stream\\" + Widen(name)).c_str(), L"rb") || !f) {
+            code = 404;
+            return "";
+        }
+        string data;
+        char buf[65536];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0) data.append(buf, n);
+        fclose(f);
+        bool m3u8 = name.size() > 5 && name.compare(name.size() - 5, 5, ".m3u8") == 0;
+        bool ts = name.size() > 3 && name.compare(name.size() - 3, 3, ".ts") == 0;
+        type = m3u8 ? "application/vnd.apple.mpegurl" : ts ? "video/mp2t" : "application/octet-stream";
+        return data;
+    }
     if (r.path.rfind("/api/", 0) != 0) {
         // Static interface files.
         string p = r.path == "/" ? "/index.html" : r.path;
@@ -1079,7 +1207,6 @@ static string Handle(const Request& r, int& code, const char*& type)
         string v;
         if (JsonRaw(b, "outDir", v) && !v.empty()) s.outDir = Widen(v);
         if (JsonRaw(b, "gameDir", v)) s.gameDir = Widen(v);
-        s.showWindow = JsonBool(b, "showWindow", s.showWindow);
         s.closeGame = JsonBool(b, "closeGame", s.closeGame);
         s.advanced = JsonBool(b, "advanced", s.advanced);
         string c = JsonStr(b, "container", s.container);
@@ -1091,7 +1218,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/add-dialog" && r.method == "POST") {
-        auto files = PickFiles(false, L"Ajouter des démos");
+        auto files = PickFiles(false, L"Add demos");
         std::lock_guard<std::mutex> l(g_mx);
         for (auto& f : files) AddDemo(f);
         return "{\"added\":" + std::to_string(files.size()) + "}";
@@ -1173,6 +1300,81 @@ static string Handle(const Request& r, int& code, const char*& type)
             }
         return "{\"ok\":true}";
     }
+    if (r.path == "/api/preview" && r.method == "POST") {
+        // Live preview of one demo ({"id"}): rendered hidden, streamed as HLS into <data>\stream,
+        // played by the interface while it renders, then remuxed into the usual MP4.
+        std::lock_guard<std::mutex> l(g_mx);
+        int id = JsonInt(b, "id");
+        size_t idx = g_items.size();
+        for (size_t i = 0; i < g_items.size(); ++i)
+            if (g_items[i].id == id) idx = i;
+        if (idx == g_items.size()) return "{\"error\":\"unknown demo\"}";
+        if (g_running) return "{\"error\":\"a render is already running\"}";
+        wstring ffmpeg = FfmpegPath();
+        if (ffmpeg.empty()) return "{\"error\":\"ffmpeg not found: download it in the settings (Advanced)\"}";
+        wstring dir = g_dataDir + L"\\stream";
+        SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+        ClearStreamDir(dir);
+        StreamSpec sp;
+        sp.active = true;
+        sp.id = id;
+        sp.width = g_set.width;
+        sp.height = g_set.height;
+        sp.fps = g_set.fps;
+        sp.dir = dir;
+        sp.out = L"index.m3u8";
+        sp.ffmpegPath = ffmpeg;
+        sp.ffArgs = StreamArgs(g_set, ffmpeg, dir);
+        SHCreateDirectoryExW(nullptr, g_set.outDir.c_str(), nullptr);
+        sp.finalPath = UniqueOutput(g_set.outDir, StripExt(FileName(g_items[idx].path)), L"mp4");
+        g_stream = sp;
+        Item again = g_items[idx];          // this demo goes first, and is rendered again
+        again.state = ItemState::Pending;
+        again.frames = again.encoded = again.renderMs = 0;
+        again.message.clear();
+        again.output.clear();
+        g_items.erase(g_items.begin() + idx);
+        g_items.insert(g_items.begin(), again);
+        g_running = true;
+        g_cancel = false;
+        g_status = "Live preview";
+        Log("preview %d: %s -> %s", id, Narrow(again.path).c_str(), Narrow(sp.finalPath).c_str());
+        std::thread(Worker).detach();
+        return "{\"ok\":true}";
+    }
+    if (r.path == "/api/visualise" && r.method == "POST") {
+        // Live "Visualiser" (POC): one demo, rendered hidden, streamed while it renders.
+        // {"path","dir","out","ffArgs","ffmpegPath","width","height","fps"}
+        StreamSpec sp;
+        string v;
+        wstring path;
+        if (JsonRaw(b, "path", v)) path = Widen(v);
+        if (JsonRaw(b, "dir", v)) sp.dir = Widen(v);
+        if (JsonRaw(b, "out", v)) sp.out = Widen(v);
+        if (JsonRaw(b, "ffArgs", v)) sp.ffArgs = Widen(v);
+        if (JsonRaw(b, "ffmpegPath", v)) sp.ffmpegPath = Widen(v);
+        sp.width = std::clamp(JsonInt(b, "width", sp.width), 320, 7680);
+        sp.height = std::clamp(JsonInt(b, "height", sp.height), 240, 4320);
+        sp.fps = std::clamp(JsonInt(b, "fps", sp.fps), 1, 1000);
+        if (path.empty() || sp.dir.empty() || sp.out.empty() || sp.ffArgs.empty())
+            return "{\"error\":\"path, dir, out and ffArgs are required\"}";
+        if (sp.out.find_first_of(L"\\\\/:*?\"<>|") != wstring::npos) return "{\"error\":\"out must be a plain file name\"}";
+        if (!FileExists(path)) return "{\"error\":\"the demo does not exist\"}";
+        if (!ReadDemo(path).ok) return "{\"error\":\"this file is not a Source demo\"}";
+        std::lock_guard<std::mutex> l(g_mx);
+        if (g_running) return "{\"error\":\"a render is already running\"}";
+        g_items.clear();
+        AddDemo(path);
+        sp.active = true;
+        sp.id = g_items.back().id;
+        g_stream = sp;
+        g_running = true;
+        g_cancel = false;
+        g_status = "Rendering";
+        Log("visualise %d: %s -> %s\\%s", sp.id, Narrow(path).c_str(), Narrow(sp.dir).c_str(), Narrow(sp.out).c_str());
+        std::thread(Worker).detach();
+        return "{\"ok\":true,\"id\":" + std::to_string(sp.id) + "}";
+    }
     if (r.path == "/api/start" && r.method == "POST") {
         std::lock_guard<std::mutex> l(g_mx);
         if (!g_running) {
@@ -1180,18 +1382,24 @@ static string Handle(const Request& r, int& code, const char*& type)
                 if (i.state == ItemState::Cancelled) i.state = ItemState::Pending;
             g_running = true;
             g_cancel = false;
-            g_status = "Rendu en cours";
+            g_status = "Rendering";
             std::thread(Worker).detach();
         }
         return "{\"ok\":true}";
     }
     if (r.path == "/api/cancel" && r.method == "POST") {
         g_cancel = true;
-        SetStatus("Annulation…");
+        SetStatus("Cancelling…");
+        return "{\"ok\":true}";
+    }
+    if (r.path == "/api/quit-game" && r.method == "POST") {
+        // Also restores the game's sound (see MuteProcessAudio) so a later normal launch hears it.
+        std::lock_guard<std::mutex> l(g_mx);
+        QuitGame();
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-out" && r.method == "POST") {
-        auto f = PickFiles(true, L"Dossier des vidéos");
+        auto f = PickFiles(true, L"Videos folder");
         if (!f.empty()) {
             std::lock_guard<std::mutex> l(g_mx);
             g_set.outDir = f[0];
@@ -1200,14 +1408,14 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-game" && r.method == "POST") {
-        auto f = PickFiles(true, L"Dossier de Portal 2 (celui qui contient portal2.exe)");
+        auto f = PickFiles(true, L"Portal 2 folder (the one that contains portal2.exe)");
         if (!f.empty()) {
             std::lock_guard<std::mutex> l(g_mx);
             if (FileExists(f[0] + L"\\portal2.exe")) {
                 g_set.gameDir = f[0];
                 SaveSettings();
             } else {
-                return "{\"error\":\"portal2.exe n'est pas dans ce dossier\"}";
+                return "{\"error\":\"portal2.exe is not in that folder\"}";
             }
         }
         return "{\"ok\":true}";
@@ -1222,7 +1430,7 @@ static string Handle(const Request& r, int& code, const char*& type)
         return "{\"ok\":true}";
     }
     if (r.path == "/api/browse-ffmpeg" && r.method == "POST") {
-        auto f = PickFiles(false, L"Choisir ffmpeg.exe", true);
+        auto f = PickFiles(false, L"Choose ffmpeg.exe", true);
         if (!f.empty()) {
             std::lock_guard<std::mutex> l(g_mx);
             if (_wcsicmp(FileName(f[0]).c_str(), L"ffmpeg.exe") != 0) return "{\"error\":\"choisis le fichier ffmpeg.exe\"}";
@@ -1341,15 +1549,24 @@ static wstring FindEdge()
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 {
-    // One instance at a time.
+    // One instance at a time (a headless run exits silently: no invisible dialog left to click).
+    bool headless = cmdLine && wcsstr(cmdLine, L"--no-window");
     HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\P2Render_single");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(nullptr, L"P2Render est déjà ouvert.", L"P2Render", MB_ICONINFORMATION);
+        if (!headless) MessageBoxW(nullptr, L"P2Render is already running.", L"P2Render", MB_ICONINFORMATION);
         return 0;
     }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    g_dataDir = KnownFolder(FOLDERID_LocalAppData) + L"\\P2Render";
+    // Portable: settings, demos, ffmpeg and the Edge profile live next to the application
+    // (P2Render\data), so the folder can be moved or copied anywhere. A read-only folder
+    // (Program Files) falls back to %LOCALAPPDATA%\P2Render.
+    g_dataDir = ExeDir() + L"data";
     CreateDirectoryW(g_dataDir.c_str(), nullptr);
+    g_portable = DirWritable(g_dataDir);
+    if (!g_portable) {
+        g_dataDir = KnownFolder(FOLDERID_LocalAppData) + L"\\P2Render";
+        CreateDirectoryW(g_dataDir.c_str(), nullptr);
+    }
     g_log = _wfsopen((ExeDir() + L"p2render.log").c_str(), L"w", _SH_DENYNO);
     g_uiDir = ExeDir() + L"ui";
     LoadSettings();
@@ -1380,7 +1597,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
     }).detach();
 
     // --no-window: server only (tests); the URL is in p2render.log.
-    bool headless = cmdLine && wcsstr(cmdLine, L"--no-window");
     HANDLE edge = nullptr;
     if (!headless) {
         wstring exe = FindEdge();
@@ -1400,14 +1616,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
         if (!edge) ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
-    // Lifetime: until the Edge window closes, or the page stops polling (closed tab, other browser):
-    // 20 s without a poll while idle (10 min headless). Never while a render runs.
+    // Lifetime: the page polls /api/state every 500 ms, so as long as polls arrive the window is
+    // alive. When they stop (window closed) the application quits: quickly when the Edge process we
+    // started is gone, after 20 s otherwise (10 minutes headless). Never while a render runs. Edge
+    // may hand the window over to a browser process that is already running and exit at once, which
+    // is why the process alone cannot decide.
     g_lastPoll = GetTickCount();
+    bool edgeGone = false;
     for (;;) {
-        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0 && !g_running) break;
-        if (!edge) Sleep(500);
+        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0) edgeGone = true;
+        else if (!edge) Sleep(500);
         DWORD idle = GetTickCount() - g_lastPoll;
-        if (!g_running && idle > (headless ? 600000u : 20000u)) break;
+        DWORD limit = edgeGone ? 5000u : (headless ? 600000u : 20000u);
+        if (!g_running && idle > limit) break;
     }
     Log("window closed");
     if (g_running) {

@@ -39,7 +39,10 @@ Visual Studio 2026 with the C++ toolsets (x86 and x64) is required.
 .\build.ps1 -Run     # builds and then launches P2Render
 ```
 
-The `dist\` directory can be copied as-is to any location.
+Le dossier `dist\portable\` est la version à donner : tout tient dedans (application, module injecté,
+encodeur, interface) et l'application n'écrit que dans `portable\data` (réglages, démos importées,
+profil de la fenêtre, ffmpeg téléchargé). Copie ou zippe le dossier entier : il fonctionne tel quel,
+sans installation et sans rien laisser ailleurs. `dist\` reste la version de développement.
 
 ## Logs for Troubleshooting
 

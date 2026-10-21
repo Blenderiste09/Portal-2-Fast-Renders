@@ -26,15 +26,16 @@ then `re/notes.md`.
 - `D:\OpenCode\ChocolateLoading` (the owner's other Portal 2 project) may be read; its `re/notes.md`
   has engine-wide findings (allocator, frame loop, demo recorder, D3D objects).
 - Git: commit every change (small commits, English messages). The owner talks French; the interface
-  is in French.
+  (app\ui\index.html, the messages it receives from the app and the core) is in English.
 
 ## Layout
 
 ```
 app/                  P2Render.exe (x64): local HTTP server + Edge --app window, queue, settings
-  main.cpp            settings (%LOCALAPPDATA%\P2Render\settings.ini), Steam library lookup, demo
+  main.cpp            settings (<exe>\data\settings.ini, portable), Steam library lookup, demo
                       header parsing, job worker, native file dialogs, JSON API
-  ui/index.html       the whole interface (vanilla HTML/CSS/JS, polls /api/state every 500 ms)
+  ui/index.html       the whole interface (vanilla HTML/CSS/JS, polls /api/state every 500 ms);
+                      hls.min.js (vendored) plays the live preview stream
 launcher/launch.cpp   p2r_launch.exe (x86): starts portal2.exe suspended, parks it on its entry point,
                       LoadLibraryW(p2r_core.dll) through a remote thread, resumes
 src/                  p2r_core.dll (x86), injected into the game
@@ -53,7 +54,7 @@ encoder/encoder.cpp   p2r_encoder.exe (x64): D3D11 OpenSharedResource + Media Fo
                       (hardware MFT), then mux of the engine WAV (AAC) into the final MP4
 tools/preview/        node server + page to check a rendered .mp4 in the browser pane
 re/                   notes.md (ALL RE findings), ghidra.ps1 + P2Query.java, projects/*.progname
-build.ps1             builds everything into dist/ (-Run, -CleanGame)
+build.ps1             builds everything into dist/ (-Run, -CleanGame) + dist\portable\ (the folder to give)
 ```
 
 ## Build and test
@@ -64,6 +65,7 @@ available. Edge (WebView) is on every Windows 10/11.
 ```powershell
 cd "D:\OpenCode\Portal 2 D3D9Ex"
 .\build.ps1             # dist\: P2Render.exe, p2r_launch.exe, p2r_core.dll(+pdb), p2r_encoder.exe, ui\
+                        #       + dist\portable\: the whole application in one folder (data included)
 .\build.ps1 -Run        # and start it
 .\build.ps1 -CleanGame  # remove the old d3d9.dll proxy (first versions) from <Portal 2>\bin
 ```
@@ -83,11 +85,20 @@ Invoke-RestMethod "$b/api/state" -Headers $h   # poll until running == false
 
 Open the same URL in the browser pane to see / click the interface (resize to 1240x820).
 `portal2\p2r_ref.dem` is a 12 s test demo recorded with the current build. Expect it `done` with 730
-frames in ~1.3 s, the MP4 in `<Videos>\P2Render` (the owner's Videos folder is `Z:\Users\flode\Videos`),
+frames in ~1.3 s, the MP4 in `dist\videos_out` (portable default; the setting can point anywhere),
 nothing left in `portal2\` (temp demo + WAV deleted), and the game closed. An old demo (e.g.
-`a2_228.dem`) must fail fast with "la démo n'a pas démarré". Check a video with `tools/preview`.
+`a2_228.dem`) must fail fast with "the demo did not start". Check a video with `tools/preview`.
 
-API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open`.
+API: `GET /api/state`; `POST /api/settings|add-dialog|add-paths|upload?name=|remove|clear|retry|start|cancel|browse-out|browse-game|open|visualise|preview|quit-game`.
+`POST /api/preview {id}` renders that demo **hidden** while ffmpeg writes an HLS stream into
+`<data>\stream` (served at `GET /stream/*`, played with hls.js in the interface), then remuxes it
+(`-c copy`) into the usual MP4 in the videos folder. The old "visible game window" mode is gone.
+`POST /api/visualise {path,dir,out,ffArgs,ffmpegPath,width,height,fps}` is the streaming POC's
+variant: it brings its own ffmpeg arguments and produces no final file. Used by the POC below.
+
+POC « visualisation en direct » (hors dépôt) : `D:\OpenCode\P2Render-POC` — page + petit serveur node
+qui pilote P2Render.exe (`--no-window`) et sert le flux qui grossit (HLS via hls.js ou MP4 fragmenté
+dans `<video>`). Voir son `README.md` : `node server.js`, puis http://127.0.0.1:8787.
 
 ## How it works
 

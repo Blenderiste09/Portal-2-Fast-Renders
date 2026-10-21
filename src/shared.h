@@ -8,7 +8,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { P2R_MAGIC = 0x52325050, P2R_VERSION = 2, P2R_SLOTS = 8 };
+enum { P2R_MAGIC = 0x52325050, P2R_VERSION = 3, P2R_SLOTS = 8 };
 
 enum P2RCodec : uint32_t { P2R_H264 = 0, P2R_HEVC = 1 };
 
@@ -32,6 +32,8 @@ struct P2RShared {
 
     // Advanced mode: frames are read back (D3D11 staging) and piped to ffmpeg as raw BGRA.
     int32_t use_ffmpeg;
+    int32_t stream;              // 1 = live output (HLS / fragmented MP4): out_path is the stream,
+                                 // the engine WAV is muxed while it is written, no mux pass at the end
     wchar_t ffmpeg_path[520];
     wchar_t ff_video_args[1024]; // output options of the video pass, e.g. "-c:v libx264 -crf 18"
     wchar_t ff_audio_args[256];  // audio options of the mux pass, e.g. "-c:a aac -b:a 320k"

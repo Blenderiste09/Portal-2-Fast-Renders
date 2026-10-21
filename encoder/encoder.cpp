@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <wchar.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -193,11 +194,28 @@ static int EncodeFrame(Video& v, int index)
 
 static std::wstring g_ffLog;
 
+// Live sound: the engine WAV is copied into a named pipe while it is written (see PumpAudio).
+struct AudioPipe {
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    HANDLE thread = nullptr;
+    HANDLE stop = nullptr;
+    wchar_t wav[MAX_PATH];
+    wchar_t name[64];
+    UINT rate = 44100, channels = 2;
+    DWORD dataOfs = 44;      // start of the PCM data
+    LONG64 sent = 0;         // samples written to the pipe (real + silence)
+    LONG64 skip = 0;         // samples of the engine stream already covered by silence
+    P2RShared* shm = nullptr;
+    int fps = 60;
+};
+
 struct Ffmpeg {
     HANDLE proc = nullptr;
     HANDLE in = nullptr;  // write end of ffmpeg's stdin
     Com<ID3D11Texture2D> staging[3];
     std::vector<char> row;
+    AudioPipe audio;
+    ~Ffmpeg();
 };
 
 // Runs ffmpeg with the given arguments; stdin = pipe (when in != null), stderr appended to
@@ -222,8 +240,7 @@ static bool StartFfmpeg(const std::wstring& args, HANDLE* in, HANDLE* proc)
         std::string line = std::string("\r\n> ffmpeg ") + utf8 + "\r\n";
         DWORD w;
         WriteFile(log, line.data(), (DWORD)line.size(), &w, nullptr);
-    }
-    std::vector<wchar_t> cl(cmd.begin(), cmd.end());
+    }    std::vector<wchar_t> cl(cmd.begin(), cmd.end());
     cl.push_back(0);
     PROCESS_INFORMATION pi = {};
     BOOL ok = CreateProcessW(g_shm->ffmpeg_path, cl.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
@@ -245,7 +262,7 @@ static bool StartFfmpeg(const std::wstring& args, HANDLE* in, HANDLE* proc)
 static std::string FfmpegLastLine()
 {
     FILE* f = _wfsopen(g_ffLog.c_str(), L"rb", _SH_DENYNO);
-    if (!f) return "ffmpeg a échoué";
+    if (!f) return "ffmpeg failed";
     std::string all;
     char buf[4096];
     size_t n;
@@ -263,7 +280,7 @@ static std::string FfmpegLastLine()
         if (!l.empty() && l.find("Guessed Channel Layout") == std::string::npos) return "ffmpeg : " + l.substr(0, 220);
         pos = e;
     }
-    return "ffmpeg a échoué";
+    return "ffmpeg failed";
 }
 
 static int WaitFfmpeg(HANDLE proc)
@@ -275,7 +292,149 @@ static int WaitFfmpeg(HANDLE proc)
     return (int)code;
 }
 
-static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* tmpVideo)
+// The engine WAV (startmovie ... wav) exists before the first frame and grows while we render.
+// Live sound. ffmpeg cannot follow a growing file (the wav demuxer stops at the first short read)
+// and it stops reading the video when the sound starves, so the pump:
+//  - copies the WAV data into a named pipe as the engine writes it (a pipe blocks, a file returns EOF),
+//    skipping the RIFF header: the raw PCM demuxer never needs a big read to start;
+//  - pads with silence whenever the sound falls behind the video, otherwise the whole pipeline
+//    deadlocks (ffmpeg waits for sound, the engine waits for free texture slots). The samples sent
+//    as silence are dropped from the engine stream when they arrive: the timing stays exact.
+static bool WaveFormat(AudioPipe& a, const wchar_t* path)
+{
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    unsigned char hdr[44] = {};
+    DWORD n = 0;
+    BOOL ok = ReadFile(h, hdr, sizeof(hdr), &n, nullptr);
+    CloseHandle(h);
+    if (!ok || n < 44) return false;
+    if (memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4) || memcmp(hdr + 12, "fmt ", 4) || memcmp(hdr + 36, "data", 4))
+        return false;
+    WORD tag = 0, bits = 0, ch = 0;
+    UINT rate = 0;
+    memcpy(&tag, hdr + 20, 2);
+    memcpy(&ch, hdr + 22, 2);
+    memcpy(&rate, hdr + 24, 4);
+    memcpy(&bits, hdr + 34, 2);
+    if (tag != 1 || bits != 16 || ch < 1 || ch > 8 || rate < 8000 || rate > 192000) return false;
+    a.rate = rate;
+    a.channels = ch;
+    return true;
+}
+
+static DWORD WINAPI PumpAudio(LPVOID p)
+{
+    AudioPipe* a = (AudioPipe*)p;
+    HANDLE wav = INVALID_HANDLE_VALUE;
+    if (!ConnectNamedPipe(a->pipe, nullptr) && GetLastError() != ERROR_PIPE_CONNECTED) {
+        Log("audio pump: ConnectNamedPipe failed (%lu)", GetLastError());
+        goto done;
+    }
+    Log("audio pump: ffmpeg connected, %u Hz %u ch, data at %lu", a->rate, a->channels, a->dataOfs);
+    wav = CreateFileW(a->wav, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (wav == INVALID_HANDLE_VALUE) {
+        Log("audio pump: cannot read %ls (%lu)", a->wav, GetLastError());
+        goto done;
+    }
+    if (SetFilePointer(wav, a->dataOfs, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) goto done;
+    Log("audio pump: copying %ls", a->wav);
+    {
+        char buf[256 << 10];
+        const DWORD align = a->channels * 2;
+        LONG64 frameSamples = a->rate / a->fps; // samples of sound per video frame
+        auto copy = [&](const char* data, DWORD len) -> bool {
+            DWORD off = 0, w = 0;
+            while (off < len && WriteFile(a->pipe, data + off, len - off, &w, nullptr)) off += w;
+            return off == len;
+        };
+        for (;;) {
+            DWORD n = 0;
+            if (ReadFile(wav, buf, sizeof(buf), &n, nullptr) && n) {
+                DWORD off = 0;
+                while (a->skip > 0 && off < n) { // already sent as silence
+                    DWORD drop = (DWORD)std::min<LONG64>(a->skip * align, n - off);
+                    drop -= drop % align;
+                    off += drop;
+                    a->skip -= drop / align;
+                }
+                if (off < n && !copy(buf + off, n - off)) break;
+                a->sent += (n - off) / align;
+            }
+            // Keep the sound at least as far as the video, or ffmpeg stalls on its audio input and
+            // the render deadlocks behind it.
+            LONG64 want = (LONG64)(a->shm ? a->shm->frames_encoded : 0) * frameSamples;
+            if (a->sent < want) {
+                LONG64 pad = std::min<LONG64>(want - a->sent, frameSamples * 30);
+                std::vector<char> silence((size_t)pad * align, 0);
+                if (!copy(silence.data(), (DWORD)silence.size())) break;
+                a->sent += pad;
+                a->skip += pad;
+                Log("audio pump: %I64d samples of silence (the engine sound lags behind)", pad);
+            }
+            if (WaitForSingleObject(a->stop, 20) == WAIT_OBJECT_0) break;
+        }
+        DWORD n = 0;
+        while (ReadFile(wav, buf, sizeof(buf), &n, nullptr) && n) // what the engine wrote last
+            if (!copy(buf, n)) break;
+    }
+done:
+    if (wav != INVALID_HANDLE_VALUE) CloseHandle(wav);
+    Log("audio pump: end, sent %I64d samples, skip %I64d", a->sent, a->skip);
+    if (a->pipe != INVALID_HANDLE_VALUE) {
+        FlushFileBuffers(a->pipe);
+        DisconnectNamedPipe(a->pipe);
+    }
+    return 0;
+}
+
+static void StopAudio(AudioPipe& a)
+{
+    if (a.stop) SetEvent(a.stop);
+    if (a.pipe != INVALID_HANDLE_VALUE) CancelIoEx(a.pipe, nullptr);
+    if (a.thread) {
+        WaitForSingleObject(a.thread, 10000);
+        CloseHandle(a.thread);
+        a.thread = nullptr;
+    }
+    if (a.stop) {
+        CloseHandle(a.stop);
+        a.stop = nullptr;
+    }
+    if (a.pipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(a.pipe);
+        a.pipe = INVALID_HANDLE_VALUE;
+    }
+}
+
+Ffmpeg::~Ffmpeg() { StopAudio(audio); }
+
+// Creates the pipe and starts the pump before ffmpeg opens it. False when the engine WAV is not
+// readable: the caller then streams the video alone.
+static bool StartAudio(AudioPipe& a, const wchar_t* wav)
+{
+    bool ok = false;
+    for (int i = 0; i < 20 && !ok; ++i) {
+        ok = WaveFormat(a, wav);
+        if (!ok) Sleep(100);
+    }
+    if (!ok) return false;
+    wcscpy_s(a.wav, wav);
+    a.shm = g_shm;
+    a.fps = g_shm->fps ? (int)g_shm->fps : 60;
+    swprintf_s(a.name, L"\\\\.\\pipe\\p2r_audio_%lu", GetCurrentProcessId());
+    a.pipe = CreateNamedPipeW(a.name, PIPE_ACCESS_OUTBOUND, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                              1, 1 << 20, 0, 0, nullptr);
+    if (a.pipe == INVALID_HANDLE_VALUE) {
+        Log("audio pump: CreateNamedPipe %lu", GetLastError());
+        return false;
+    }
+    a.stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    a.thread = CreateThread(nullptr, 0, PumpAudio, &a, 0, nullptr);
+    return a.thread && a.stop;
+}
+
+static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* outFile)
 {
     P2RShared* m = g_shm;
     D3D11_TEXTURE2D_DESC td;
@@ -285,10 +444,25 @@ static int InitFfmpeg(Video& v, Ffmpeg& f, const wchar_t* tmpVideo)
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     td.MiscFlags = 0;
     for (auto& s : f.staging) CHECK(v.dev->CreateTexture2D(&td, nullptr, &s));
-    wchar_t args[2048];
-    swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s -an \"%s\"",
-               m->width, m->height, m->fps, m->ff_video_args, tmpVideo);
-    if (!StartFfmpeg(args, &f.in, &f.proc)) return Fail("impossible de lancer ffmpeg (%ls)", m->ffmpeg_path);
+    wchar_t args[2600];
+    if (m->stream) {
+        // Live output: the sound is muxed while it is written. No -map: ffmpeg picks one video and
+        // (when the pipe is there) one audio stream from the inputs.
+        wchar_t audio[600] = L"";
+        if (wcsstr(m->ff_video_args, L"-an")) Log("stream without sound (-an)");
+        else if (StartAudio(f.audio, m->wav_path))
+            // -probesize/-analyzeduration: without them find_stream_info() waits for 5 MB of sound
+            // (29 s) before handing over, and the render deadlocks behind the throttled game.
+            swprintf_s(audio, L"-f s16le -ar %u -ac %u -probesize 4096 -analyzeduration 0 -i \"%s\" ",
+                       f.audio.rate, f.audio.channels, f.audio.name);
+        else Log("no live sound (%ls is not readable), streaming the video alone", m->wav_path);
+        swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s%s \"%s\"",
+                   m->width, m->height, m->fps, audio, m->ff_video_args, outFile);
+    } else {
+        swprintf_s(args, L"-hide_banner -loglevel warning -y -f rawvideo -pix_fmt bgra -s %ux%u -framerate %u -i pipe:0 %s -an \"%s\"",
+                   m->width, m->height, m->fps, m->ff_video_args, outFile);
+    }
+    if (!StartFfmpeg(args, &f.in, &f.proc)) return Fail("cannot start ffmpeg (%ls)", m->ffmpeg_path);
     return 0;
 }
 
@@ -442,8 +616,10 @@ static int Run(unsigned id)
     if (!semReady || !semFree || !evStarted || !game) return Fail("cannot open the synchronisation objects");
 
     bool ff = m->use_ffmpeg != 0;
+    bool stream = ff && m->stream != 0;
     wchar_t videoPath[540];
-    swprintf_s(videoPath, ff ? L"%s.video.mkv" : L"%s.video.mp4", m->out_path);
+    if (stream) wcscpy_s(videoPath, m->out_path); // the live stream is written where the final file would be
+    else swprintf_s(videoPath, ff ? L"%s.video.mkv" : L"%s.video.mp4", m->out_path);
     DeleteFileW(videoPath);
 
     CHECK(MFStartup(MF_VERSION, MFSTARTUP_LITE));
@@ -462,7 +638,7 @@ static int Run(unsigned id)
         HANDLE waits[2] = {semReady, game};
         for (;;) {
             DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-            if (w != WAIT_OBJECT_0) return Fail("le jeu s'est fermé pendant le rendu");
+            if (w != WAIT_OBJECT_0) return Fail("the game closed during the render");
             if (m->ended && frames >= m->total_frames) break;
             if (ff) {
                 if (EncodeFrameFF(v, f, frames, semFree)) {
@@ -479,6 +655,8 @@ static int Run(unsigned id)
         m->enc_state = P2R_ENC_MUXING;
         if (ff) {
             CloseHandle(f.in);
+            f.in = nullptr;
+            StopAudio(f.audio); // end of the sound: ffmpeg finishes the stream
             int code = WaitFfmpeg(f.proc);
             if (code != 0) return Fail("%s", FfmpegLastLine().c_str());
         } else {
@@ -492,6 +670,14 @@ static int Run(unsigned id)
     if (frames == 0) {
         DeleteFileW(videoPath);
         return Fail("no frame");
+    }
+    if (stream) {
+        // The stream is the result: the sound is already muxed in it, nothing to assemble.
+        DeleteFileW(m->wav_path);
+        MFShutdown();
+        m->enc_state = P2R_ENC_DONE;
+        Log("stream done: %ls", m->out_path);
+        return 0;
     }
     DeleteFileW(m->out_path);
     bool wav = WaitFileClosed(m->wav_path, 30000);
@@ -513,7 +699,7 @@ static int Run(unsigned id)
             std::wstring keep = std::wstring(m->out_path) + L".mkv";
             DeleteFileW(m->out_path);
             MoveFileExW(videoPath, keep.c_str(), MOVEFILE_REPLACE_EXISTING);
-            return Fail("assemblage du son impossible (%s) ; vidéo sans son gardée en .mkv", why.c_str());
+            return Fail("cannot assemble the sound (%s); video kept without sound as .mkv", why.c_str());
         }
         DeleteFileW(videoPath);
         if (wav) DeleteFileW(m->wav_path);
