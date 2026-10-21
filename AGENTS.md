@@ -143,5 +143,12 @@ several demos per game session, incompatible demos reported. 720p ~570 fps, 1080
 (`startmovie` TGA ~126 fps). Not tested yet: long demos / demos with level changes, co-op demos,
 resolutions above the desktop size, AMD/Intel encoders, Steam not running.
 
+Render speed is `frames / (last frame - first frame)`: the capture window only, without `endmovie` /
+`disconnect` / ring draining (that overhead, 5-10% and map dependent, used to be included). The
+quality setting changes the encoder bitrate only (`Bitrate()` in app/main.cpp), never the frame
+rate: measured A/B with the game kept open, Standard and Maximum render within 1% of each other.
+Two things make single runs look different: the first job of a game session is much slower (cold
+asset caches, ~25% at 1080p60), and run-to-run spread is ±5%.
+
 Ideas: preview thumbnails of demos, per-demo output names, a "keep game open" session with a live
 preview, CQP/quality modes, a texture pool in the encoder.
