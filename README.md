@@ -1,6 +1,6 @@
 # P2Render: Ultra-Fast Portal 2 Demo Rendering
 
-**I wanted to use the technology SourceDemoRender (https://github.com/crashfort/SourceDemoRender) uses to render demos super fast in other source game. Problem : Those games use D3D9Ex which supports GPU texture sharing, and Portal 2 uses D3D9 which doesn't.
+**I wanted to use the technology SourceDemoRender (https://github.com/crashfort/SourceDemoRender) uses to render demos super fast in other Source engine games. The problem: those games use D3D9Ex, which supports GPU texture sharing, and Portal 2 uses D3D9, which doesn't.
 This project is a proof of concept. It redirects the game's Direct3DCreate9 import to Direct3DCreate9Ex and adapts the CreateDevice call to CreateDeviceEx, without touching the game folder. That gives access to texture sharing, making the rendered frames accessible from an external process.**
 
 P2Render is a standalone application that converts Portal 2 demos into MP4 videos (H.264 or HEVC, with audio) much faster than `startmovie`. Frames never pass through the CPU: the game runs in Direct3D 9Ex, each frame is copied to a shared texture on the GPU, then encoded by the GPU's hardware encoder (NVENC / AMF / QuickSync).
@@ -39,10 +39,10 @@ Visual Studio 2026 with the C++ toolsets (x86 and x64) is required.
 .\build.ps1 -Run     # builds and then launches P2Render
 ```
 
-Le dossier `dist\portable\` est la version à donner : tout tient dedans (application, module injecté,
-encodeur, interface) et l'application n'écrit que dans `portable\data` (réglages, démos importées,
-profil de la fenêtre, ffmpeg téléchargé). Copie ou zippe le dossier entier : il fonctionne tel quel,
-sans installation et sans rien laisser ailleurs. `dist\` reste la version de développement.
+The `dist\portable\` folder is the version to share: everything fits inside it (application, injected
+module, encoder, interface) and the application only writes into `portable\data` (settings, imported
+demos, window profile, downloaded ffmpeg). Copy or zip the whole folder: it works as is, with no
+installation and nothing left anywhere else. `dist\` remains the development build.
 
 ## Logs for Troubleshooting
 

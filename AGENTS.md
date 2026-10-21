@@ -8,8 +8,7 @@ intuitive interface. Design decisions (2026-10-20):
 
 Frames are shared with the encoder **on the GPU** (texture sharing), so they are never read back to
 the CPU like the engine's `startmovie`. Texture sharing needs **Direct3D 9Ex**, and Portal 2 creates
-plain D3D9, so the injected core switches the device to D3D9Ex. User instructions (French):
-`README.md`.
+plain D3D9, so the injected core switches the device to D3D9Ex. User instructions: `README.md`.
 
 This file is the entry point for every new contributor and every AI session. Read it fully first,
 then `re/notes.md`.
@@ -21,9 +20,9 @@ then `re/notes.md`.
   written for P2Render or reverse engineered from the game itself (`re/notes.md`).
 - Nothing is installed, patched or left behind in the game folder: the injected module lives next to
   `P2Render.exe` and is loaded for the time of a render only.
-- Git: commit every change (small commits, English messages). The interface (`app/ui/index.html`,
-  the messages it receives from the app and the core) is in English; `README.md` is the French user
-  documentation.
+- Git: commit every change (small commits, English messages). The public documentation (`README.md`,
+  `AGENTS.md`) and the interface (`app/ui/index.html`, the messages it receives from the app and the
+  core) are in English; the owner works in French.
 
 Local setup of the development machine (not needed to build or use the project):
 
