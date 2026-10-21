@@ -623,6 +623,10 @@ window.addEventListener('drop', e => e.preventDefault());
 
 refresh();
 setInterval(refresh, 500);
+
+// The application quits when this page goes away (the render queue keeps it alive while it runs).
+// sendBeacon still returns the request when the document is being unloaded.
+addEventListener('pagehide', () => navigator.sendBeacon('/api/bye?t=' + encodeURIComponent(token)));
 </script>
 </body>
 </html>

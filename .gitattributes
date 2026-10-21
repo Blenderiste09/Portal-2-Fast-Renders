@@ -1,0 +1,4 @@
+# Batch files must keep CRLF endings: cmd.exe fails to resolve labels (call :label, goto :label)
+# in a .cmd stored with LF only. eol=crlf makes every clone check them out correctly.
+*.cmd text eol=crlf
+*.bat text eol=crlf

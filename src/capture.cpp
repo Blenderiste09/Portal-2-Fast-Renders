@@ -47,6 +47,7 @@ struct Session {
     int notPlayingFrames = 0;
     bool sawDemo = false;
     DWORD startTick = 0;
+    DWORD lastFrameTick = 0; // time of the last captured frame: the render speed stops there
     wchar_t wavPath[MAX_PATH];
 };
 
@@ -282,9 +283,10 @@ static bool OnMovieFrame()
     s.query[slot]->Issue(D3DISSUE_END);
     ++s.pendingCount;
     ++s.frames;
+    s.lastFrameTick = GetTickCount();
     if (g_ctrl) {
         g_ctrl->frames = s.frames;
-        g_ctrl->render_ms = GetTickCount() - s.startTick;
+        g_ctrl->render_ms = s.lastFrameTick - s.startTick;
     }
     return true;
 }
@@ -305,7 +307,10 @@ static void Finish(Session& s, const char* why)
     s.shm->total_frames = s.frames;
     s.shm->ended = 1;
     ReleaseSemaphore(s.semReady, 1, nullptr); // wake the encoder even with no pending frame
-    DWORD ms = GetTickCount() - s.startTick;
+    // Render speed = the capture window only: from the first frame to the last one. The finalisation
+    // below (endmovie, cvars, disconnect, draining the ring) is fixed cost that depends on the map,
+    // not on the settings, and it made the reported speed 5-10% too low and different every run.
+    DWORD ms = s.lastFrameTick > s.startTick ? s.lastFrameTick - s.startTick : 0;
     if (g_ctrl) g_ctrl->render_ms = ms;
     SetJob(JOB_ENCODING, "%s : %d images en %.1f s (%.0f images/s)", why, s.frames, ms / 1000.0,
            ms ? s.frames * 1000.0 / ms : 0.0);

@@ -1,5 +1,5 @@
 // P2Render.exe (x64): the user-facing application. Serves its interface (ui\index.html) on a local
-// HTTP port and shows it in an Edge app window; runs the render queue: starts Portal 2 through
+// HTTP port, opens it in the default browser; runs the render queue: starts Portal 2 through
 // p2r_launch.exe (p2r_core.dll injected, nothing installed in the game), sends one job per demo
 // through the control block (src/control.h) and reports progress to the interface.
 #ifndef WIN32_LEAN_AND_MEAN
@@ -595,6 +595,7 @@ static string g_status = "Ready";      // one line under the queue
 static string g_gameState = "stopped"; // stopped | starting | ready | busy
 static DWORD g_gamePid;
 static std::atomic<DWORD> g_lastPoll;
+static std::atomic<DWORD> g_byeAt; // when the interface announced it was unloading (0 = alive)
 
 // Live preview: one demo rendered hidden while ffmpeg writes a stream (HLS) that the interface
 // plays. Started from the interface (/api/preview, the app builds the ffmpeg arguments) or by the
@@ -1186,14 +1187,27 @@ static string Handle(const Request& r, int& code, const char*& type)
                                                                     : "text/html; charset=utf-8";
         return data;
     }
-    if (r.Header("X-Token") != g_token) {
+    // The page signals its unload with sendBeacon, which cannot set a request header: for that one
+    // route the token travels in the query string.
+    bool byeAuth = r.path == "/api/bye" && r.query == "t=" + g_token;
+    if (r.Header("X-Token") != g_token && !byeAuth) {
         code = 403;
         return "{\"error\":\"token\"}";
     }
     g_lastPoll = GetTickCount();
     const string& b = r.body;
 
-    if (r.path == "/api/state") return StateJson();
+    // A state poll also proves the page is alive, which cancels a goodbye in progress (reload, F5).
+    if (r.path == "/api/state") {
+        g_byeAt = 0;
+        return StateJson();
+    }
+    // The page is unloading (window or tab closed). The lifetime loop quits after a short grace
+    // period, so a reload of the page cancels it.
+    if (r.path == "/api/bye") {
+        g_byeAt = GetTickCount();
+        return "{}";
+    }
 
     if (r.path == "/api/settings" && r.method == "POST") {
         std::lock_guard<std::mutex> l(g_mx);
@@ -1534,19 +1548,6 @@ static string RandomToken()
     return t;
 }
 
-static wstring FindEdge()
-{
-    const wchar_t* cands[] = {L"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-                              L"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"};
-    for (auto c : cands)
-        if (FileExists(c)) return c;
-    wchar_t p[MAX_PATH];
-    DWORD sz = sizeof(p);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe", nullptr, RRF_RT_REG_SZ, nullptr, p, &sz) == ERROR_SUCCESS)
-        return p;
-    return {};
-}
-
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
 {
     // One instance at a time (a headless run exits silently: no invisible dialog left to click).
@@ -1557,9 +1558,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
         return 0;
     }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    // Portable: settings, demos, ffmpeg and the Edge profile live next to the application
-    // (P2Render\data), so the folder can be moved or copied anywhere. A read-only folder
-    // (Program Files) falls back to %LOCALAPPDATA%\P2Render.
+    // Portable: settings, demos and ffmpeg live next to the application (P2Render\data), so the
+    // folder can be moved or copied anywhere. A read-only folder (Program Files) falls back to
+    // %LOCALAPPDATA%\P2Render.
     g_dataDir = ExeDir() + L"data";
     CreateDirectoryW(g_dataDir.c_str(), nullptr);
     g_portable = DirWritable(g_dataDir);
@@ -1597,38 +1598,23 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmdLine, int)
     }).detach();
 
     // --no-window: server only (tests); the URL is in p2render.log.
-    HANDLE edge = nullptr;
     if (!headless) {
-        wstring exe = FindEdge();
-        if (!exe.empty()) {
-            wstring args = L"\"" + exe + L"\" --app=" + Widen(url) + L" --user-data-dir=\"" + g_dataDir +
-                           L"\\webview\" --window-size=1240,820 --no-first-run --no-default-browser-check --disable-features=Translate" +
-                           L" --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
-            STARTUPINFOW si = {sizeof(si)};
-            PROCESS_INFORMATION pi = {};
-            std::vector<wchar_t> cl(args.begin(), args.end());
-            cl.push_back(0);
-            if (CreateProcessW(exe.c_str(), cl.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
-                CloseHandle(pi.hThread);
-                edge = pi.hProcess;
-            }
-        }
-        if (!edge) ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        // The interface opens in the user's default browser: no embedded runtime to install, no
+        // dedicated profile, and nothing written outside data\.
+        ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
-    // Lifetime: the page polls /api/state every 500 ms, so as long as polls arrive the window is
-    // alive. When they stop (window closed) the application quits: quickly when the Edge process we
-    // started is gone, after 20 s otherwise (10 minutes headless). Never while a render runs. Edge
-    // may hand the window over to a browser process that is already running and exit at once, which
-    // is why the process alone cannot decide.
+    // Lifetime: the page polls /api/state every 500 ms and signals its unload with /api/bye, so the
+    // application quits as soon as the window is closed (the grace period lets a reload cancel it).
+    // Browsers throttle timers in background tabs (once a minute at worst), so the poll alone is
+    // only a safety net for a crashed or frozen browser. Never quits while a render runs.
     g_lastPoll = GetTickCount();
-    bool edgeGone = false;
     for (;;) {
-        if (edge && WaitForSingleObject(edge, 500) == WAIT_OBJECT_0) edgeGone = true;
-        else if (!edge) Sleep(500);
-        DWORD idle = GetTickCount() - g_lastPoll;
-        DWORD limit = edgeGone ? 5000u : (headless ? 600000u : 20000u);
-        if (!g_running && idle > limit) break;
+        Sleep(500);
+        DWORD now = GetTickCount();
+        bool bye = g_byeAt && now - g_byeAt > 2000;
+        DWORD limit = headless ? 600000u : 120000u;
+        if (!g_running && (bye || now - g_lastPoll > limit)) break;
     }
     Log("window closed");
     if (g_running) {
