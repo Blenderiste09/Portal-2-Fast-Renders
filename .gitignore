@@ -1,6 +1,11 @@
+# build output (rebuilt by build.ps1)
 build/
+dist/
+
+# reverse-engineering scratch: Ghidra dumps and the copied game dlls
 re/out/
 re/bin/
+
+# files produced at run time
 *.log
 *.mp4
-dist/

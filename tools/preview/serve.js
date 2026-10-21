@@ -1,5 +1,5 @@
 // Preview server for checking a rendered video: copy an .mp4 here as test.mp4, then
-// preview_start "preview" (.claude/launch.json) -> http://localhost:8765 shows frames at 1/4/7/11 s.
+//   node tools/preview/serve.js   ->   http://localhost:8765 shows frames at 1/4/7/11 s.
 const http=require('http'),fs=require('fs'),path=require('path');
 const root=__dirname;
 http.createServer((q,r)=>{const f=path.join(root,decodeURIComponent(q.url.split('?')[0]==='/'?'/index.html':q.url.split('?')[0]));
