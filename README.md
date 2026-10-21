@@ -34,10 +34,12 @@ Including the time needed to launch Portal 2, two demos are rendered in approxim
 
 Visual Studio 2026 with the C++ toolsets (x86 and x64) is required.
 
-```powershell
-.\build.ps1          # outputs dist\ (P2Render.exe and its files)
-.\build.ps1 -Run     # builds and then launches P2Render
+```bat
+build.cmd          :: outputs dist\ (P2Render.exe and its files)
+build.cmd -Run     :: builds and then launches P2Render
 ```
+
+`build.cmd` is a plain batch script: nothing to install, no PowerShell execution policy involved.
 
 The `dist\portable\` folder is the version to share: everything fits inside it (application, injected
 module, encoder, interface) and the application only writes into `portable\data` (settings, imported

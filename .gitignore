@@ -1,4 +1,4 @@
-# build output (rebuilt by build.ps1)
+# build output (rebuilt by build.cmd)
 build/
 dist/
 

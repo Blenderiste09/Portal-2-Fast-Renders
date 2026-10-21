@@ -59,7 +59,7 @@ encoder/encoder.cpp   p2r_encoder.exe (x64): D3D11 OpenSharedResource + Media Fo
 tools/preview/        node server (node tools/preview/serve.js, port 8765) + page to check a
                       rendered .mp4 in the browser pane
 re/                   notes.md (ALL RE findings), ghidra.ps1 + P2Query.java, projects/*.progname
-build.ps1             builds everything into dist/ (-Run, -CleanGame) + dist\portable\ (the folder to give)
+build.cmd             builds everything into dist/ (-Run, -CleanGame) + dist\portable\ (the folder to give)
 ```
 
 ## Build and test
@@ -67,13 +67,17 @@ build.ps1             builds everything into dist/ (-Run, -CleanGame) + dist\por
 Visual Studio 18 (Community) is installed; no cmake/ninja/python/ffmpeg/.NET SDK. Node 24 is
 available. The interface runs in the user's default browser (no embedded browser runtime).
 
-```powershell
-cd "D:\OpenCode\Portal 2 D3D9Ex"
-.\build.ps1             # dist\: P2Render.exe, p2r_launch.exe, p2r_core.dll(+pdb), p2r_encoder.exe, ui\
-                        #       + dist\portable\: the whole application in one folder (data included)
-.\build.ps1 -Run        # and start it
-.\build.ps1 -CleanGame  # remove the old d3d9.dll proxy (first versions) from <Portal 2>\bin
+```bat
+cd /d "D:\OpenCode\Portal 2 D3D9Ex"
+build.cmd             :: dist\: P2Render.exe, p2r_launch.exe, p2r_core.dll(+pdb), p2r_encoder.exe, ui\
+                      ::       + dist\portable\: the whole application in one folder (data included)
+build.cmd -Run        :: and start it
+build.cmd -CleanGame  :: remove the old d3d9.dll proxy (first versions) from <Portal 2>\bin
 ```
+
+A plain batch script (no PowerShell policy to fight, no module to install). It activates the
+toolchain twice at most, once per architecture: calling `vcvars*.bat` repeatedly in the same `cmd`
+session kills the script.
 
 P2Render.exe must not be running when building (its files are locked).
 
